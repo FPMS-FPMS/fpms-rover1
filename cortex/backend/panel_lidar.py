@@ -46,6 +46,50 @@ LIDAR = {
     "points_per_rev": 360,
 }
 
+# ---------------------------------------------------------------------------
+# ARENA AND MARKERS
+#
+# TAKEN VERBATIM from panel_field.py, which took them verbatim from the mission
+# stack (FPMSM2PERFECT/fpms_rover2/geometry.py). That file carries the warning
+# and it applies here: "DO NOT re-measure these into something else. Every
+# failure of the 2026-09-02 session traced to a zone constant that had drifted."
+#
+# So M1 and M2 below are NOT retyped from a tape measure - they are the same
+# numbers the working mission stack drives to.
+# ---------------------------------------------------------------------------
+ARENA = {
+    "w": 1000.0,                 # ARENA_W_MM
+    "h": 1200.0,                 # ARENA_H_MM
+    "home": {"x": 842.5, "y": 157.5, "heading_deg": 90.0},
+    "zone_radius": 131.0,        # the vases are 263 mm across
+    "edge_keep": 150.0,          # the rover CENTRE may not go nearer an edge
+    # Where an object may BE is deliberately wider than where the rover may
+    # DRIVE - the zones sit outside the driveable arena on purpose. This is the
+    # faint outer box, and it is what makes the view wider than the arena.
+    "obj_bounds": {"x_min": -100.0, "x_max": 1100.0,
+                   "y_min": -100.0, "y_max": 1700.0},
+}
+
+MARKERS = [
+    # M1 and M2: measured, from the mission stack. Do not edit.
+    {"id": "M1", "x": 412.5, "y": 1357.5, "kind": "zone", "measured": True},
+    {"id": "M2", "x": 842.5, "y": 1357.5, "kind": "zone", "measured": True},
+    # M3: REQUESTED, NOT MEASURED. Placed by continuing the M1->M2 spacing
+    # exactly - they are 430 mm apart at y=1357.5, so M3 sits 430 mm left of
+    # M1 at x = -17.5. That is OUTSIDE the driveable arena, which is correct
+    # for a zone: the geometry deliberately puts zones beyond the arena and
+    # obj_bounds runs to x = -100.
+    #
+    # An earlier placeholder at x=157.5 was wrong and it showed on the map:
+    # zone_radius is 131 mm, so two zones need 262 mm between centres, and
+    # 412.5-157.5 = 255 made M3 overlap M1. Any replacement must clear 262 mm.
+    {"id": "M3", "x": -17.5, "y": 1357.5, "kind": "zone", "measured": False},
+    # Water refill station. ALSO NOT MEASURED - Rover 1 carries no water
+    # hardware that has been identified, and no refill point is recorded
+    # anywhere in the mission stack.
+    {"id": "WATER", "x": 157.5, "y": 157.5, "kind": "water", "measured": False},
+]
+
 # Rover 1's footprint is NOT yet measured. Rover 2's is (see panel_rover.py
 # BODY_MM), but that is a different chassis and reusing its numbers here would
 # draw a body outline that is confidently wrong. Left null on purpose; the
@@ -110,6 +154,8 @@ def state() -> dict:
         "scan_url": "http://%s:8781/scan" % ip,
         "health_url": "http://%s:8781/health" % ip,
         "lidar": LIDAR,
+        "arena": ARENA,
+        "markers": MARKERS,
         "body_mm": BODY_MM,
         "body_note": "Rover 1's chassis has not been measured yet, so no "
                      "footprint is drawn. Rover 2's numbers are a different "

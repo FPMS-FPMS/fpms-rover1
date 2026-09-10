@@ -363,3 +363,40 @@ reorders between boots, so ours pins the `by-id` path.
 ⚠️ The `base_link → base_laser` height of 0.18 m is the **vendor's example
 value**, not a measurement of this rover. Fix it before anything navigates off
 that transform.
+
+## LiDAR tab: the arena, not a bare polar plot
+
+Rectangular field view showing the driveable arena inside the **wider** object
+bounds (the zones deliberately sit outside the arena — that is the geometry,
+not a drawing choice), a 500 mm grid, the edge-keep inset, the live scan, and
+the markers.
+
+**M1 and M2 are the mission stack's own constants**, carried through verbatim
+from `panel_field.py` → `FPMSM2PERFECT/fpms_rover2/geometry.py`, which warns:
+*"DO NOT re-measure these into something else. Every failure of the 2026-09-02
+session traced to a zone constant that had drifted."*
+
+    M1     412.5, 1357.5   measured
+    M2     842.5, 1357.5   measured
+    M3     -17.5, 1357.5   PLACEHOLDER
+    WATER  157.5,  157.5   PLACEHOLDER
+    HOME   842.5,  157.5   measured
+
+**Placeholders are drawn dashed with a `?`** and listed as such. A guessed
+point must not look surveyed on a map somebody will drive from.
+
+M3 is placed by continuing the exact M1→M2 spacing (430 mm), which puts it at
+x = −17.5 — outside the arena, which is *correct* for a zone. A first attempt
+at x = 157.5 was wrong and the map showed it: `zone_radius` is 131 mm, so two
+zones need 262 mm between centres and 412.5 − 157.5 = 255 made M3 overlap M1.
+**Any replacement must clear 262 mm.**
+
+⚠️ **Rover 1 has no localisation.** The scan is drawn from an *assumed* pose at
+HOME facing 90°, and the panel says so on the canvas. It is not a tracked
+position, and the map must not be treated as one.
+
+Also on the tab: the Control tab's **Refresh rover** action, scan-range presets,
+and Scan/Markers visibility toggles.
+
+Note: in the Rover 2 code `M1,M2 = left; M3,M4 = right` refers to **motor
+indices** in `set_motor(m1,m2,m3,m4)` — nothing to do with these markers.
