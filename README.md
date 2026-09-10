@@ -465,3 +465,38 @@ Nothing can derive that — it is a human putting a robot down.
 The LiDAR panel now draws from the live pose and states which pose is in force:
 `pose LIVE (odometry)` or `pose ASSUMED = HOME`. Obstacle positions follow the
 live pose too, so they stay put on the map as the rover moves past them.
+
+## Path planning to the M1/M2 midpoint
+
+Grid A* (`cortex/web/planner.js`) replanned twice a second from the *current*
+detected obstacles, since obstacles move between runs.
+
+Constants are **Rover 2's**, not invented — `GRID_RES = 50` (its own note: *"was
+100: only ~6 cells across a 650mm arena"*) and `ROUTE_CLEARANCE = 90`.
+
+### Three things it refuses to lie about
+
+**The goal is outside the driveable arena.** M1/M2 sit at y=1357.5 against an
+arena 1200 deep — by design. A path to that point does not exist and never
+will. So the planner drives to a **standoff** and reports the remaining
+distance, drawn as an orange dashed leg that is obviously not driveable.
+
+**Goal inside inflation.** Your notes record Nav2 `STATUS_ABORTED` failures from
+exactly this. Instead of failing, the goal relocates to the nearest free cell
+and the relocation distance is reported.
+
+**Start inside inflation.** The rover is a real object and can legitimately be
+standing in inflated space. The start relocates — but the gap is drawn in red
+dashes and reported (`start moved: 673 mm`), because an unbroken line from the
+rover would claim a route it does not have.
+
+Diagonals require both orthogonals clear, so a path cannot clip the corner of
+an inflated obstacle.
+
+⚠️ **The robot radius is unmeasured.** It defaults to 130 mm — Rover 2's own
+`ROBOT_RADIUS = ROBOT_W/2`. Deliberately *not* the circumscribed 239 mm: that
+is the correct figure for rotating in place, but 239+90 = 329 mm of inflation
+on a 1000 mm arena leaves so little free space the planner relocates the start
+halfway across the field. Rover 2's file already flags its own 90 mm clearance
+as *"too tight for 230mm chassis"*. **Both numbers are provisional until Rover 1
+is measured.**

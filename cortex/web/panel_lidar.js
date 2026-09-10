@@ -17,6 +17,7 @@
  * mount(root, api) -> { update(state), destroy() }
  */
 import { connect, release, subscribe } from './ros.js';
+import { buildGrid, plan, GRID_RES, ROUTE_CLEARANCE } from './planner.js';
 
 const PANEL = 'lidar';
 const FETCH_MS = 200;
@@ -95,8 +96,20 @@ export function mount(root, api = {}) {
   const mountedAt = Date.now();
   let last = null, lastErr = null, timer = null, inflight = null;
   let arena = null, markers = [], body = null;
-  let showScan = true, showMarkers = true, showObs = true;
+  let showScan = true, showMarkers = true, showObs = true, showPlan = true;
   let obstacles = [];
+  let route = null;
+  // Rover 1's body is NOT measured. This is Rover 2's ROBOT_W/2 - the same
+  // figure its own planner uses (ROBOT_RADIUS = ROBOT_W / 2 = 260/2).
+  //
+  // NOT the circumscribed radius of 239. That is the right number for a rover
+  // ROTATING IN PLACE, but 239 + 90 clearance is 329 mm of inflation on a
+  // 1000 mm arena, which leaves so little free space that the planner has to
+  // relocate the start halfway across the field. Rover 2's own file already
+  // flags its 90 mm clearance as "too tight for 230mm chassis", so treat both
+  // numbers as provisional until Rover 1 is measured.
+  let robotRadius = 130;
+  let lastPlanAt = 0;
   // Which end of the arena the operator is standing at. The stored geometry
   // puts the zones at high y; someone facing the arena from the far side sees
   // them at the BOTTOM. This is a view preference, never a change to the data.
@@ -123,7 +136,8 @@ export function mount(root, api = {}) {
   const btnMk = h('button', { class: 'rbtn on', type: 'button', text: 'Markers' });
   const btnFlip = h('button', { class: 'rbtn on', type: 'button', text: 'Flip view' });
   const btnObs = h('button', { class: 'rbtn on', type: 'button', text: 'Obstacles' });
-  toggleRow.append(btnScan, btnMk, btnObs, btnFlip, btnRefresh);
+  const btnPlan = h('button', { class: 'rbtn on', type: 'button', text: 'Route' });
+  toggleRow.append(btnScan, btnMk, btnObs, btnPlan, btnFlip, btnRefresh);
 
   const side = h('div', { class: 'card' }, [
     h('h2', { text: 'Scanner' }), kvEl,
@@ -154,6 +168,11 @@ export function mount(root, api = {}) {
   });
   btnObs.addEventListener('click', () => {
     showObs = !showObs; btnObs.className = 'rbtn' + (showObs ? ' on' : ''); draw();
+  });
+  btnPlan.addEventListener('click', () => {
+    showPlan = !showPlan; btnPlan.className = 'rbtn' + (showPlan ? ' on' : '');
+    if (showPlan) replan();
+    draw();
   });
   btnFlip.addEventListener('click', () => {
     flip = !flip; btnFlip.className = 'rbtn' + (flip ? ' on' : ''); draw();
@@ -226,6 +245,9 @@ export function mount(root, api = {}) {
                  rays: (m.ranges || []).length, frames: null, crc_reject: null, age_s: 0 };
         lastErr = null;
         obstacles = detectObstacles(pts, currentPose());
+        // Replanning is cheap on a 21x25 grid but not free; twice a second is
+        // far faster than the rover can invalidate a route.
+        if (showPlan && Date.now() - lastPlanAt > 500) replan();
         paintSide(); paintObstacles(); draw();
       });
     } catch (e) {
@@ -282,6 +304,20 @@ export function mount(root, api = {}) {
       x: c.x, y: c.y, n: c.n,
       w: Math.max(40, c.maxx - c.minx), d: Math.max(40, c.maxy - c.miny),
     }));
+  }
+
+  /* Plan to the midpoint of M1 and M2 - the lake, i.e. the refill point.
+   * Rebuilt from the CURRENT obstacles each time, because they move. */
+  function replan() {
+    if (!arena || !markers.length) { route = null; return; }
+    const m1 = markers.find((m) => m.id === 'M1');
+    const m2 = markers.find((m) => m.id === 'M2');
+    if (!m1 || !m2) { route = null; return; }
+    const goal = { x: (m1.x + m2.x) / 2, y: (m1.y + m2.y) / 2 };
+    const grid = buildGrid(arena, showObs ? obstacles : [], markers, robotRadius);
+    route = plan(arena, grid, currentPose(), goal);
+    route.goal = goal;
+    lastPlanAt = Date.now();
   }
 
   // ---- drawing ---------------------------------------------------------
@@ -422,6 +458,47 @@ export function mount(root, api = {}) {
       }
     }
 
+    // ---- planned route ---------------------------------------------------
+    if (showPlan && route && route.path && route.path.length > 1) {
+      ctx.strokeStyle = cssVar('--accent2', '#62a8ff');
+      ctx.lineWidth = Math.max(2, W / 380);
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      route.path.forEach((pt, i) => {
+        i ? ctx.lineTo(X(pt.x), Y(pt.y)) : ctx.moveTo(X(pt.x), Y(pt.y));
+      });
+      ctx.stroke();
+      // waypoints
+      ctx.fillStyle = cssVar('--accent2', '#62a8ff');
+      for (const pt of route.path) {
+        ctx.beginPath(); ctx.arc(X(pt.x), Y(pt.y), Math.max(2, W / 420), 0, Math.PI * 2); ctx.fill();
+      }
+      // If the route had to start away from the rover, show that gap. An
+      // unbroken line from the rover would claim a route it does not have.
+      if (route.movedStartMm > GRID_RES) {
+        const p0 = route.path[0];
+        ctx.setLineDash([3, 4]);
+        ctx.strokeStyle = cssVar('--bad', '#ff5c8a');
+        ctx.lineWidth = Math.max(1.4, W / 620);
+        ctx.beginPath();
+        ctx.moveTo(X(p.x), Y(p.y)); ctx.lineTo(X(p0.x), Y(p0.y));
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+
+      // The last leg is the part the rover CANNOT drive - the goal is outside
+      // the arena. Dashed, so it is obviously not a driveable segment.
+      if (route.standoffMm > GRID_RES && route.goal) {
+        const endp = route.path[route.path.length - 1];
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = cssVar('--warn', '#ffcf5c');
+        ctx.lineWidth = Math.max(1.4, W / 620);
+        ctx.beginPath();
+        ctx.moveTo(X(endp.x), Y(endp.y));
+        ctx.lineTo(X(route.goal.x), Y(route.goal.y));
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+
     // ---- markers ---------------------------------------------------------
     if (showMarkers) {
       const fs = Math.max(10, Math.round(W / 62));
@@ -516,7 +593,22 @@ export function mount(root, api = {}) {
       ['pose', poseFresh() ? 'live (odometry)' : 'assumed (HOME)'],
       ['position', poseFresh() ? `${pose.x.toFixed(0)}, ${pose.y.toFixed(0)} mm` : DASH],
       ['heading', poseFresh() ? `${pose.hdg.toFixed(0)}°` : DASH],
+      ['route', !route ? DASH : (route.status === 'ok'
+        ? `${route.path.length} legs, ${routeLenMm(route).toFixed(0)} mm` : route.status)],
+      ['standoff', route && route.status === 'ok'
+        ? `${route.standoffMm.toFixed(0)} mm from goal` : DASH],
+      ['clearance', `${robotRadius} + ${ROUTE_CLEARANCE} mm (unmeasured)`],
+      ['start moved', route && route.movedStartMm > 1
+        ? `${route.movedStartMm.toFixed(0)} mm — rover is inside inflation` : 'no'],
     ]) kvEl.append(h('dt', { text: k }), h('dd', { text: v }));
+  }
+
+  function routeLenMm(r) {
+    let d = 0;
+    for (let i = 1; i < r.path.length; i++) {
+      d += Math.hypot(r.path[i].x - r.path[i - 1].x, r.path[i].y - r.path[i - 1].y);
+    }
+    return d;
   }
 
   function paintObstacles() {
