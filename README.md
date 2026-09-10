@@ -500,3 +500,41 @@ on a 1000 mm arena leaves so little free space the planner relocates the start
 halfway across the field. Rover 2's file already flags its own 90 mm clearance
 as *"too tight for 230mm chassis"*. **Both numbers are provisional until Rover 1
 is measured.**
+
+## Path planning, and a lake that places itself
+
+Grid A* (`cortex/web/planner.js`), replanned twice a second from the *current*
+detected obstacles. `GRID_RES = 50` and `ROUTE_CLEARANCE = 90` are Rover 2's own
+constants (its note: *"was 100: only ~6 cells across a 650mm arena"*).
+
+**Three things the planner refuses to lie about:**
+
+- **The goal is outside the driveable arena.** M1/M2 sit at y=1357.5 against an
+  arena 1200 deep, by design — no path there exists. It drives to a standoff
+  and reports the remainder as an orange dashed leg.
+- **Goal inside inflation** — the exact case your notes record as Nav2
+  `STATUS_ABORTED`. The goal relocates to the nearest free cell, distance
+  reported.
+- **Start inside inflation.** The rover can legitimately be standing in
+  inflated space. The start relocates, but the gap is drawn in red dashes and
+  reported, because an unbroken line would claim a route that does not exist.
+
+⚠️ Robot radius defaults to **130 mm** — Rover 2's `ROBOT_W/2`, *not* the
+circumscribed 239. 239+90 = 329 mm of inflation on a 1000 mm arena leaves so
+little free space the start relocates halfway across the field. Both figures
+are provisional until Rover 1 is measured; the panel labels them `(unmeasured)`.
+
+### The lake is derived, not stored
+
+It sits **between the two rovers**, so it is not a coordinate — it is the
+midpoint of Rover 1's live pose and Rover 2's. It was briefly hardcoded at the
+M1/M2 midpoint and that was simply wrong.
+
+Nothing stores it. The panel computes it and shows **nothing** while either
+position is unknown, rather than a guessed point sitting on the map looking
+authoritative. Rover 2 is read from **its own** rosbridge
+(`ws://192.168.137.18:9090`) rather than proxied, so Rover 1 keeps working
+while Rover 2 is off — which it has been all session.
+
+The planner targets the lake once derivable and falls back to the M1/M2
+midpoint until then, so there is always something to plan to.

@@ -39,6 +39,20 @@ SCAN_TYPE = "sensor_msgs/msg/LaserScan"
 POSE_TOPIC = "/rover/arena_pose"
 POSE_TYPE = "geometry_msgs/msg/PoseStamped"
 
+# Rover 2. It runs its own stack on 192.168.137.18 and, when it is up and
+# publishing an arena pose of its own, this is where Rover 1 would read it.
+# Until then the field is None and the UI says Rover 2 is unknown rather than
+# drawing it somewhere plausible.
+ROVER2 = {
+    "host": "192.168.137.18",
+    "pose_topic": "/rover/arena_pose",
+    "pose_type": "geometry_msgs/msg/PoseStamped",
+    "rosbridge": "ws://192.168.137.18:9090",
+    "note": "Rover 2 has not been reachable this session. The lake is the "
+            "midpoint of the two rovers, so it cannot be placed until both "
+            "positions are known.",
+}
+
 # The scanner's own geometry and limits, so the plot is drawn to scale rather
 # than normalised to whatever the largest return happened to be.
 LIDAR = {
@@ -83,16 +97,14 @@ MARKERS = [
     # 412.5 - 300 = 112.5, same y as the other zones.
     # Clears the 262 mm two-zone minimum (zone_radius 131) with 38 mm to spare.
     {"id": "M3", "x": 112.5, "y": 1357.5, "kind": "zone", "measured": True},
-    # The lake / water refill, given as "in the middle of both", i.e. the
-    # midpoint of M1 and M2: (412.5 + 842.5) / 2 = 627.5, same y.
+    # The lake / water refill is BETWEEN THE TWO ROVERS, so it is not a fixed
+    # coordinate at all - it is derived from where the rovers are. It was
+    # briefly hardcoded at the M1/M2 midpoint and that was simply wrong.
     #
-    # NOTE THE GEOMETRY IS TIGHT: it sits 215 mm from each of M1 and M2, and a
-    # zone is 131 mm in radius, so anything drawn wider than 84 mm radius
-    # overlaps them. It is therefore drawn at 80 mm and NOT as a zone. If the
-    # lake is physically bigger than that, the three features genuinely
-    # overlap and the layout needs checking, not the drawing.
-    {"id": "LAKE", "x": 627.5, "y": 1357.5, "kind": "water", "measured": True,
-     "radius": 80.0},
+    # Nothing here defines it. The frontend computes it as the midpoint of
+    # Rover 1's live pose and Rover 2's, and shows nothing while either is
+    # unknown. That way the answer appears the moment the positions do,
+    # instead of a guessed point sitting on the map looking authoritative.
 ]
 
 # Rover 1's footprint is NOT yet measured. Rover 2's is (see panel_rover.py
@@ -158,6 +170,7 @@ def state() -> dict:
         "scan_type": SCAN_TYPE,
         "pose_topic": POSE_TOPIC,
         "pose_type": POSE_TYPE,
+        "rover2": ROVER2,
         "scan_url": "http://%s:8781/scan" % ip,
         "health_url": "http://%s:8781/health" % ip,
         "lidar": LIDAR,

@@ -91,6 +91,8 @@ export function mount(root, api = {}) {
   // says which it is using - a map drawn from an assumed pose that is silently
   // wrong is worse than one that admits it does not know.
   let pose = null, poseAt = 0;
+  // Rover 2, read the same way Rover 1 reads itself. null until it publishes.
+  let rover2 = null, r2pose = null, r2At = 0, r2Wired = false, unsubR2 = null, r2Status = null;
   let rosAt = 0, source = 'connecting';
   let rosTimes = [], rosEverUp = false, wasFresh = false;
   const mountedAt = Date.now();
@@ -190,6 +192,17 @@ export function mount(root, api = {}) {
   // ---- ROS -------------------------------------------------------------
   const rosFresh = () => (Date.now() - rosAt) < 2000;
   const poseFresh = () => pose && (Date.now() - poseAt) < 2000;
+  const r2Fresh = () => r2pose && (Date.now() - r2At) < 4000;
+
+  /* The lake sits BETWEEN THE TWO ROVERS, so it is derived, never stored.
+   * Returns null while either position is unknown - a guessed point on a map
+   * someone will drive from is worse than an empty one. */
+  function lakePoint() {
+    const a = poseFresh() ? pose : null;
+    const b = r2Fresh() ? r2pose : null;
+    if (!a || !b) return null;
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
 
   /* The pose the drawing uses: live odometry when it is arriving, otherwise
    * the placement at HOME. Which one is in force is shown on the canvas. */
@@ -310,14 +323,39 @@ export function mount(root, api = {}) {
    * Rebuilt from the CURRENT obstacles each time, because they move. */
   function replan() {
     if (!arena || !markers.length) { route = null; return; }
-    const m1 = markers.find((m) => m.id === 'M1');
-    const m2 = markers.find((m) => m.id === 'M2');
-    if (!m1 || !m2) { route = null; return; }
-    const goal = { x: (m1.x + m2.x) / 2, y: (m1.y + m2.y) / 2 };
+    // Prefer the lake once it is derivable; fall back to the M1/M2 midpoint
+    // so there is still something to plan to while Rover 2 is off.
+    const lk = lakePoint();
+    let goal = lk;
+    if (!goal) {
+      const m1 = markers.find((m) => m.id === 'M1');
+      const m2 = markers.find((m) => m.id === 'M2');
+      if (!m1 || !m2) { route = null; return; }
+      goal = { x: (m1.x + m2.x) / 2, y: (m1.y + m2.y) / 2 };
+    }
     const grid = buildGrid(arena, showObs ? obstacles : [], markers, robotRadius);
     route = plan(arena, grid, currentPose(), goal);
     route.goal = goal;
     lastPlanAt = Date.now();
+  }
+
+  /* Rover 2 publishes its own arena pose on its own rosbridge. Reading it
+   * directly rather than proxying keeps Rover 1 working when Rover 2 is off -
+   * which it has been all session. */
+  async function wireRover2(r2) {
+    try {
+      r2Status = (ok) => { if (!ok && !dead) r2pose = null; };
+      const { ROSLIB, ros } = await connect(r2.rosbridge, r2Status);
+      if (dead) { release(r2.rosbridge, r2Status); return; }
+      unsubR2 = subscribe(ROSLIB, ros, r2.pose_topic, r2.pose_type, (m) => {
+        if (dead || !m.pose) return;
+        r2pose = { x: m.pose.position.x, y: m.pose.position.y,
+                   hdg: quatYawDeg(m.pose.orientation) };
+        r2At = Date.now();
+      });
+    } catch (e) {
+      // Rover 2 being off is a normal state, not an error worth shouting about.
+    }
   }
 
   // ---- drawing ---------------------------------------------------------
@@ -455,6 +493,36 @@ export function mount(root, api = {}) {
         ctx.globalAlpha = 0.14; ctx.fillStyle = bad;
         ctx.fillRect(X(o.x) - bw / 2, Y(o.y) - bd / 2, bw, bd);
         ctx.globalAlpha = 1;
+      }
+    }
+
+    // ---- Rover 2, and the lake derived from both rovers -------------------
+    if (showMarkers) {
+      const fs2 = Math.max(10, Math.round(W / 62));
+      ctx.font = `600 ${fs2}px ui-monospace, monospace`;
+      if (r2Fresh()) {
+        const c2 = cssVar('--warn', '#ffcf5c');
+        ctx.strokeStyle = c2; ctx.lineWidth = Math.max(1.5, W / 620);
+        const rr = Math.max(5, W / 150);
+        ctx.beginPath(); ctx.arc(X(r2pose.x), Y(r2pose.y), rr, 0, Math.PI * 2); ctx.stroke();
+        const a2 = r2pose.hdg * Math.PI / 180, L2 = Math.max(9, W / 40);
+        ctx.beginPath(); ctx.moveTo(X(r2pose.x), Y(r2pose.y));
+        ctx.lineTo(X(r2pose.x + Math.cos(a2) * L2 / s), Y(r2pose.y + Math.sin(a2) * L2 / s));
+        ctx.stroke();
+        ctx.fillStyle = c2;
+        const lw2 = ctx.measureText('ROVER 2').width;
+        ctx.fillText('ROVER 2', X(r2pose.x) - lw2 / 2, Y(r2pose.y) - rr - 5);
+      }
+      const lk = lakePoint();
+      if (lk) {
+        const cl = cssVar('--accent2', '#62a8ff');
+        const lr = 80 * s;
+        ctx.strokeStyle = cl; ctx.lineWidth = Math.max(1.4, W / 700);
+        ctx.beginPath(); ctx.arc(X(lk.x), Y(lk.y), lr, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 0.18; ctx.fillStyle = cl; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.fillStyle = cl;
+        const lwl = ctx.measureText('LAKE').width;
+        ctx.fillText('LAKE', X(lk.x) - lwl / 2, Y(lk.y) - lr - 5);
       }
     }
 
@@ -598,6 +666,11 @@ export function mount(root, api = {}) {
       ['standoff', route && route.status === 'ok'
         ? `${route.standoffMm.toFixed(0)} mm from goal` : DASH],
       ['clearance', `${robotRadius} + ${ROUTE_CLEARANCE} mm (unmeasured)`],
+      ['rover 2', r2Fresh() ? `${r2pose.x.toFixed(0)}, ${r2pose.y.toFixed(0)} mm` : 'not reporting'],
+      ['lake', lakePoint()
+        ? `${lakePoint().x.toFixed(0)}, ${lakePoint().y.toFixed(0)} mm (derived)`
+        : 'needs both rover positions'],
+      ['goal', lakePoint() ? 'lake' : 'M1/M2 midpoint (fallback)'],
       ['start moved', route && route.movedStartMm > 1
         ? `${route.movedStartMm.toFixed(0)} mm — rover is inside inflation` : 'no'],
     ]) kvEl.append(h('dt', { text: k }), h('dd', { text: v }));
@@ -649,6 +722,8 @@ export function mount(root, api = {}) {
     if (st.markers && !markers.length) { markers = st.markers; paintMarkers(); draw(); }
     if (st.body_mm && !body) { body = st.body_mm; draw(); }
     if (!rosWired && st.rosbridge) { rosWired = true; wireRos(st.rosbridge); }
+    if (st.rover2 && !rover2) { rover2 = st.rover2; }
+    if (rover2 && !r2Wired && rover2.rosbridge) { r2Wired = true; wireRover2(rover2); }
 
     const cp = currentPose();
     warnBox.textContent = cp.live
@@ -692,6 +767,8 @@ export function mount(root, api = {}) {
       inflight = null;
       if (unsub) { unsub(); unsub = null; }
       if (unsubPose) { unsubPose(); unsubPose = null; }
+      if (unsubR2) { unsubR2(); unsubR2 = null; }
+      if (rover2 && rover2.rosbridge) { release(rover2.rosbridge, r2Status); }
       if (rosUrl) { release(rosUrl, onStatus); rosUrl = null; }
     },
   };
