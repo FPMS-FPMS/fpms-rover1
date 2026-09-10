@@ -51,10 +51,10 @@ DEFAULT_DRIVER = os.path.expanduser('~/drivers/p3-ir-camera')
 
 
 def ironbow(n: int = 256) -> np.ndarray:
-    """A black-red-yellow-white ramp, built here so the node needs no cv2.
+    """Black -> red -> yellow -> white, built here so the node needs no cv2.
 
-    Perceptually monotonic in lightness, which matters: a rainbow map invents
-    edges that are not in the data and makes a thermal image lie.
+    Monotonic in lightness, which matters: a rainbow map invents edges that
+    are not in the data and makes a thermal image lie about structure.
     """
     x = np.linspace(0.0, 1.0, n)
     r = np.clip(x * 3.0, 0, 1)
@@ -63,7 +63,54 @@ def ironbow(n: int = 256) -> np.ndarray:
     return (np.stack([r, g, b], axis=1) * 255).astype(np.uint8)
 
 
-LUT = ironbow()
+def grey(n: int = 256) -> np.ndarray:
+    x = np.linspace(0, 255, n).astype(np.uint8)
+    return np.stack([x, x, x], axis=1)
+
+
+PALETTES = {"ironbow": ironbow(), "grey": grey()}
+LUT = PALETTES["ironbow"]
+
+
+class _Agc:
+    """Chooses the display range, and holds it steady.
+
+    Two problems with mapping each frame across its own min..max:
+
+      * ONE pixel decides the whole image. A single hot reflection or a dead
+        cold pixel crushes everything else into a few grey levels. Percentiles
+        reject that; the true extremes still go out on /thermal/stats.
+      * The range jumps every frame, so the picture pulses as objects enter
+        and leave. That reads as the sensor being unstable when it is not.
+
+    So: percentile clip, then an exponential blend between frames - but with a
+    SNAP when the scene genuinely changes, otherwise walking into a warm room
+    would fade in over several seconds and look broken.
+    """
+
+    def __init__(self, lo_pct=1.0, hi_pct=99.0, alpha=0.25, snap_c=6.0):
+        self.lo_pct, self.hi_pct = lo_pct, hi_pct
+        self.alpha, self.snap_c = alpha, snap_c
+        self.lo = self.hi = None
+
+    def range_for(self, temps: np.ndarray):
+        lo, hi = np.percentile(temps, [self.lo_pct, self.hi_pct])
+        lo, hi = float(lo), float(hi)
+        if hi - lo < 1.0:                 # a flat scene still needs a span
+            mid = 0.5 * (lo + hi)
+            lo, hi = mid - 0.5, mid + 0.5
+        if self.lo is None:
+            self.lo, self.hi = lo, hi
+        elif abs(lo - self.lo) > self.snap_c or abs(hi - self.hi) > self.snap_c:
+            self.lo, self.hi = lo, hi     # real scene change: do not fade
+        else:
+            a = self.alpha
+            self.lo = (1 - a) * self.lo + a * lo
+            self.hi = (1 - a) * self.hi + a * hi
+        return self.lo, self.hi
+
+
+AGC = _Agc()
 
 
 class ThermalNode(Node):
@@ -74,12 +121,16 @@ class ThermalNode(Node):
         self.declare_parameter('model', 'p1')
         self.declare_parameter('publish_compressed', True)
         self.declare_parameter('max_fps', 9.0)
+        self.declare_parameter('palette', 'ironbow')
 
         self.driver_path = self.get_parameter('driver_path').value
         self.frame_id = self.get_parameter('frame_id').value
         self.model = str(self.get_parameter('model').value).lower()
         self.want_compressed = bool(self.get_parameter('publish_compressed').value)
         self.min_dt = 1.0 / max(0.5, float(self.get_parameter('max_fps').value))
+        self.palette = str(self.get_parameter('palette').value).lower()
+        global LUT
+        LUT = PALETTES.get(self.palette, PALETTES['ironbow'])
 
         qos = QoSProfile(depth=2,
                          reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -181,18 +232,35 @@ class ThermalNode(Node):
 
         if self.want_compressed:
             try:
-                from PIL import Image as PILImage
+                from PIL import Image as PILImage, PngImagePlugin
                 import io
-                # Scale across THIS frame's own span. A fixed span would make
-                # a 24-25 C room look uniformly black; the real range is
-                # published on /thermal/temperature for anything that needs
-                # absolute values.
-                span = max(0.5, tmax - tmin)
-                norm = np.clip((temps - tmin) / span, 0, 1)
+                lo, hi = AGC.range_for(temps)
+                span = max(0.5, hi - lo)
+                norm = np.clip((temps - lo) / span, 0, 1)
                 idx = (norm * 255).astype(np.uint8)
                 rgb = LUT[idx]
+
+                # The exact display range travels INSIDE the PNG, so the
+                # browser can invert the colour map and recover a temperature
+                # for any pixel. Pairing the image with a separate stats topic
+                # would be off by up to a frame, and Float32MultiArray carries
+                # no header to align on.
+                meta = PngImagePlugin.PngInfo()
+                meta.add_text("fpms_lo_c", "%.3f" % lo)
+                meta.add_text("fpms_hi_c", "%.3f" % hi)
+                meta.add_text("fpms_min_c", "%.3f" % tmin)
+                meta.add_text("fpms_max_c", "%.3f" % tmax)
+                # Where the extremes are, so the UI can mark them without
+                # shipping the whole temperature field.
+                amin = int(np.argmin(temps)); amax = int(np.argmax(temps))
+                h_, w_ = temps.shape
+                meta.add_text("fpms_min_xy", "%d,%d" % (amin % w_, amin // w_))
+                meta.add_text("fpms_max_xy", "%d,%d" % (amax % w_, amax // w_))
+                meta.add_text("fpms_palette", self.palette)
+
                 buf = io.BytesIO()
-                PILImage.fromarray(rgb, mode='RGB').save(buf, format='PNG', optimize=False)
+                PILImage.fromarray(rgb, mode='RGB').save(
+                    buf, format='PNG', optimize=False, pnginfo=meta)
                 c = CompressedImage()
                 c.header.stamp = stamp
                 c.header.frame_id = self.frame_id

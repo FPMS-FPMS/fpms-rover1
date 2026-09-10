@@ -235,3 +235,42 @@ a true 9.807 — **0.33% error**.
 where the only honest reading is the ~6-count bias. Verifying the gyro needs a
 known rotation. Since the accel proved not to follow the datasheet, do not
 assume the gyro does.
+
+## Thermal view (enhanced 2026-09-10)
+
+The dashboard reads temperatures, not just colours.
+
+**Node side — the display range is chosen properly.** Mapping each frame across
+its own min..max has two failure modes, and both were happening:
+
+- *One pixel decides the image.* A single hot reflection or a dead cold pixel
+  crushes everything else into a few levels. Now clipped at the 1st/99th
+  percentile; the true extremes still go out on `/thermal/stats`.
+- *The range jumps every frame*, so the picture pulses as objects enter and
+  leave — which reads as an unstable sensor. Now blended between frames, with a
+  **snap** when the scene genuinely changes (>6 °C), so walking into a warm room
+  does not fade in over several seconds.
+
+Observed: scene 22.8–35.2 °C, display range 22.9–33.5 °C — the percentile clip
+rejecting outliers exactly as intended.
+
+**The exact range travels INSIDE the PNG** as `tEXt` (`fpms_lo_c`, `fpms_hi_c`,
+`fpms_min_c`, `fpms_max_c`, `fpms_min_xy`, `fpms_max_xy`, `fpms_palette`). That
+is what makes a spot readout possible without shipping the float field: the
+browser inverts the colour map exactly. Pairing the image with a separate stats
+topic would be off by up to a frame, and `Float32MultiArray` carries no header
+to align on.
+
+Raw temperatures are ~102 KB of base64 per frame at 160x120 float32; at 8 fps
+that is 800 KB/s through rosbridge. The PNG is ~12 KB.
+
+**Panel side** — a canvas, not an `<img>`:
+
+- hover anywhere for a **spot temperature**
+- hottest and coldest pixels ringed and labelled, from coordinates the node
+  computed on the real float field rather than guessed from the picture
+- a **colour bar** labelled with the display range, so the colours mean something
+- smoothing is **off by default** and opt-in: interpolation invents detail the
+  160x120 sensor never measured
+- ironbow rather than a rainbow map — a rainbow invents edges that are not in
+  the data
