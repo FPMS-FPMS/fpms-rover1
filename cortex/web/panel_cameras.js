@@ -160,7 +160,8 @@ export function mount(root, api = {}) {
     const live = tFresh();
     thermBadge.className = 'badge ' + (live ? 'live' : 'bad');
     if (live && tStats) {
-      thermBadge.textContent = `live  ${tStats[0].toFixed(1)}–${tStats[1].toFixed(1)} °C`;
+      thermBadge.textContent = (tStats.length > 1)
+        ? `live  ${tStats[0].toFixed(1)}–${tStats[1].toFixed(1)} °C` : 'live';
     } else if (live) {
       thermBadge.textContent = 'live';
     } else {
@@ -246,8 +247,9 @@ export function mount(root, api = {}) {
       ['transport', t.usable ? 'ROS 2 → rosbridge' : DASH],
       ['topic', t.image_topic || DASH],
       ['frames shown', String(tFrames)],
-      ['range now', tStats ? `${tStats[0].toFixed(1)} – ${tStats[1].toFixed(1)} °C` : DASH],
-      ['centre', tStats ? `${tStats[3].toFixed(1)} °C` : DASH],
+      ['range now', tStats && tStats.length > 1
+        ? `${tStats[0].toFixed(1)} – ${tStats[1].toFixed(1)} °C` : DASH],
+      ['centre', tStats && tStats.length > 3 ? `${tStats[3].toFixed(1)} °C` : DASH],
     ]);
 
     // -- regular ----------------------------------------------------------

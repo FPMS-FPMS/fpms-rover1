@@ -30,9 +30,13 @@ function loadRoslib() {
     const s = document.createElement('script');
     s.src = './vendor/roslib.min.js';
     s.async = true;
+    // Clear the cache on failure. Caching a REJECTED promise would mean one
+    // bad first paint poisons every later connect() on every panel, with no
+    // retry - and on an isolated venue hotspot a single miss is plausible.
+    const fail = (msg) => { loading = null; reject(new Error(msg)); };
     s.onload = () => window.ROSLIB ? resolve(window.ROSLIB)
-                                   : reject(new Error('roslib loaded but ROSLIB is undefined'));
-    s.onerror = () => reject(new Error('could not load vendor/roslib.min.js'));
+                                   : fail('roslib loaded but ROSLIB is undefined');
+    s.onerror = () => fail('could not load vendor/roslib.min.js');
     document.head.appendChild(s);
   });
   return loading;
@@ -65,6 +69,7 @@ export async function connect(url, onStatus) {
     conns.set(url, c);
   }
   c.refs++;
+  if (c.closeTimer) { clearTimeout(c.closeTimer); c.closeTimer = null; }
   if (onStatus) {
     c.listeners.add(onStatus);
     onStatus(c.connected, c.connected ? 'connected' : 'connecting');
@@ -79,8 +84,16 @@ export function release(url, onStatus) {
   if (onStatus) c.listeners.delete(onStatus);
   c.refs = Math.max(0, c.refs - 1);
   if (c.refs === 0) {
-    try { c.ros.close(); } catch (e) { /* already gone */ }
-    conns.delete(url);
+    // Linger before tearing down. Only one panel is mounted at a time, so
+    // closing instantly means every tab switch drops and rebuilds the
+    // rosbridge connection - which defeats sharing it and makes the first
+    // second of each tab look dead.
+    c.closeTimer = setTimeout(() => {
+      if (c.refs === 0) {
+        try { c.ros.close(); } catch (e) { /* already gone */ }
+        conns.delete(url);
+      }
+    }, 15000);
   }
 }
 

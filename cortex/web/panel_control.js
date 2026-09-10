@@ -261,7 +261,7 @@ export function mount(root, api = {}) {
       if (d.camera) devs.append(devRow('Regular camera', d.camera.present, false, null, d.camera.note));
     }
 
-    noteCard.style.display = st.note ? '' : '';
+    noteCard.style.display = '';   // always shown: it explains why there are no drive controls
   }
 
   if (api && api.state) update(api.state);

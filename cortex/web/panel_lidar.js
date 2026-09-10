@@ -93,16 +93,12 @@ export function mount(root, api = {}) {
   // declaration throws a ReferenceError that silently kills the panel.
   let dead = false;
   let scanUrl = null;
+  // ROS is primary, HTTP is the fallback. The rover's HTTP bridge runs in
+  // health-only mode and never opens the scanner, so the scan comes from ROS;
+  // the HTTP path is only used if ROS goes quiet.
   let rosUrl = null, rosWired = false, unsub = null, onStatus = null;
   let stTopic = '/scan', stType = 'sensor_msgs/msg/LaserScan';
   let rosAt = 0;
-  let source = 'connecting';
-  // ROS is primary, HTTP is the fallback. Only one of them can own the
-  // scanner at a time (the two systemd units on the rover declare Conflicts=
-  // on each other), so this prefers rosbridge and drops to HTTP only when ROS
-  // has actually gone quiet - not merely because it has not spoken yet.
-  let ws = null, wsUrl = null, wired = false, retryTimer = null;
-  let rosAt = 0;                 // last time a ROS scan arrived
   let source = 'connecting';
   let last = null;          // last good scan payload
   let lastErr = null;
