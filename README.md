@@ -103,3 +103,47 @@ Working today over plain HTTP. ROS 2 **Humble** (jammy, the correct base) is
 being added alongside this, with the HTTP path kept as the fallback.
 Humble only — a Jazzy/Iron node on this network can crash the robot's Humble
 nodes with `std::bad_alloc`.
+
+## ROS 2 Humble (added 2026-09-10)
+
+ROS runs **alongside** the HTTP bridge, not instead of it.
+
+    ros2_ws/src/fpms_rover1/          ament_python package
+      fpms_rover1/ld19_node.py        LD19 -> sensor_msgs/LaserScan on /scan
+      launch/rover1.launch.py         the node + rosbridge on :9090
+    rover/fpms-ros-rover1.service     systemd unit, ROS_DOMAIN_ID=20
+
+Build and enable on the rover:
+
+    cd ~/ros2_ws && colcon build --packages-select fpms_rover1 --symlink-install
+    sudo install -o root -g root -m 0644 rover/fpms-ros-rover1.service /etc/systemd/system/
+    sudo systemctl enable --now fpms-ros-rover1
+
+### The two paths are mutually exclusive, on purpose
+
+The scanner's serial port has one owner. Linux will let **both** the ROS node
+and the HTTP bridge open it, and then each receives a fraction of the bytes and
+both silently emit corrupt scans - no error, just wrong geometry. So the two
+units declare `Conflicts=` on each other: starting either stops the other.
+
+ROS is the primary path and is `enabled`. The HTTP bridge is installed but
+`disabled`; start it and the ROS stack stops automatically:
+
+    sudo systemctl start fpms-rover-bridge     # falls back to HTTP
+    sudo systemctl start fpms-ros-rover1       # back to ROS
+
+`panel_lidar.js` prefers rosbridge and drops to HTTP only after ROS has
+actually gone quiet for 2 s, and shows which source is live.
+
+### Measured, not assumed
+
+- `/scan` at **9.93 Hz**, 0 CRC rejects over 4139 frames, 596 rpm
+- LaserScan: 360 rays, 1.00 deg increment, angle_min 0 -> angle_max 2pi-inc
+- Subscribed from the ground station over rosbridge: 360 rays, 350 returns,
+  0.111-7.153 m, 9.7 Hz
+
+A ray with no return is published as **+inf**, the ROS convention - not 0.0,
+which would read as an obstacle at the origin. Clockwise sweep is corrected by
+remapping the array, keeping `angle_increment` positive, because a negative
+increment with `angle_min > angle_max` is legal but several consumers
+mishandle it.

@@ -2,6 +2,9 @@
 Description=FPMS rover bridge (LiDAR + health over HTTP)
 After=network-online.target
 Wants=network-online.target
+# See fpms-ros-rover1.service: one owner for the scanner's serial port.
+# This is the FALLBACK path - start it only when the ROS stack is down.
+Conflicts=fpms-ros-rover1.service
 
 [Service]
 Type=simple

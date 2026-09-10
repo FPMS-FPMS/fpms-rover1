@@ -1,0 +1,27 @@
+[Unit]
+Description=FPMS Rover 1 ROS 2 stack (LD19 scanner + rosbridge)
+After=network-online.target
+Wants=network-online.target
+# The scanner's serial port has ONE owner. Linux will happily let both this
+# and the HTTP bridge open it, and then each gets a fraction of the bytes and
+# BOTH silently produce corrupt scans - no error, just wrong geometry. So the
+# two are declared mutually exclusive: starting either one stops the other.
+Conflicts=fpms-rover-bridge.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=dialout
+# Humble only. A Jazzy/Iron/Kilted node on this network can crash the robot's
+# Humble nodes with std::bad_alloc.
+Environment=ROS_DOMAIN_ID=20
+Environment=RCUTILS_LOGGING_USE_STDOUT=1
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /home/ubuntu/ros2_ws/install/setup.bash && exec ros2 launch fpms_rover1 rover1.launch.py'
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

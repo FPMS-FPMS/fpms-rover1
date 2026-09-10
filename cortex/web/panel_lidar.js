@@ -88,6 +88,13 @@ export function mount(root, api = {}) {
 
   let dead = false;
   let scanUrl = null;
+  // ROS is primary, HTTP is the fallback. Only one of them can own the
+  // scanner at a time (the two systemd units on the rover declare Conflicts=
+  // on each other), so this prefers rosbridge and drops to HTTP only when ROS
+  // has actually gone quiet - not merely because it has not spoken yet.
+  let ws = null, wsUrl = null, wired = false, retryTimer = null;
+  let rosAt = 0;                 // last time a ROS scan arrived
+  let source = 'connecting';
   let last = null;          // last good scan payload
   let lastErr = null;
   let timer = null;
@@ -170,9 +177,66 @@ export function mount(root, api = {}) {
     ctx.beginPath(); ctx.arc(cx, cy, dot * 1.6, 0, Math.PI * 2); ctx.fill();
   }
 
-  // ---- fetching --------------------------------------------------------
+  // ---- ROS transport ---------------------------------------------------
+  function rosFresh() { return (Date.now() - rosAt) < 2000; }
+
+  /* A LaserScan is evenly spaced rays from angle_min; this turns it into the
+   * [angleDeg, distMm, intensity] triples the plot already draws. Infinite
+   * and out-of-band rays are DROPPED, not clamped - ROS uses +inf for "no
+   * return", and clamping it to range_max would draw a solid wall at 12 m. */
+  function fromLaserScan(m) {
+    const out = [];
+    const rr = m.ranges || [];
+    const inten = m.intensities || [];
+    const a0 = m.angle_min, da = m.angle_increment;
+    for (let i = 0; i < rr.length; i++) {
+      const r = rr[i];
+      if (r === null || !isFinite(r)) continue;
+      if (r < m.range_min || r > m.range_max) continue;
+      let deg = (a0 + da * i) * 180 / Math.PI;
+      deg = ((deg % 360) + 360) % 360;
+      out.push([deg, Math.round(r * 1000), inten[i] || 0]);
+    }
+    return out;
+  }
+
+  function connectRos(url) {
+    if (dead) return;
+    try { ws = new WebSocket(url); } catch (e) { retryRos(url); return; }
+    ws.onopen = () => {
+      if (dead) return;
+      ws.send(JSON.stringify({ op: 'subscribe', topic: st_topic, type: st_type }));
+    };
+    ws.onmessage = (ev) => {
+      if (dead) return;
+      let m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m || m.topic !== st_topic || !m.msg) return;
+      const pts = fromLaserScan(m.msg);
+      rosAt = Date.now();
+      source = 'ROS';
+      last = { ok: true, points: pts, count: pts.length,
+               hz: last && last.hz ? last.hz : 0, rpm: last && last.rpm ? last.rpm : 0,
+               frames: null, crc_reject: null, age_s: 0 };
+      lastErr = null;
+      paintSide(); draw();
+    };
+    ws.onclose = () => { if (!dead) retryRos(url); };
+    ws.onerror = () => { try { ws.close(); } catch (e) { /* already closing */ } };
+  }
+
+  function retryRos(url) {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => { if (!dead) connectRos(url); }, 3000);
+  }
+
+  let st_topic = '/scan', st_type = 'sensor_msgs/msg/LaserScan';
+
+  // ---- fetching (HTTP fallback) ----------------------------------------
   async function tick() {
-    if (dead || !scanUrl) return;
+    // ROS is live, so do not also hammer the HTTP bridge - and on the rover
+    // the HTTP bridge is stopped whenever the ROS stack owns the scanner.
+    if (dead || !scanUrl || rosFresh()) return;
     try {
       const ac = new AbortController();
       inflight = ac;
@@ -201,13 +265,15 @@ export function mount(root, api = {}) {
     const s = last;
     const ok = !!(s && s.ok);
     overlay.className = 'stat ' + (ok ? 'ok' : 'bad');
+    const via = rosFresh() ? 'ROS' : (ok ? 'HTTP' : source);
     overlay.textContent = ok
-      ? `${s.count} pts   ${s.hz.toFixed(2)} Hz   ${s.rpm.toFixed(0)} rpm`
+      ? `${via}   ${s.count} pts` + (s.hz ? `   ${s.hz.toFixed(2)} Hz` : '')
       : ('no scan — ' + (lastErr || (s && s.error) || 'unknown'));
 
     kvEl.replaceChildren();
     const rows = [
       ['status', ok ? 'spinning' : (lastErr || (s && s.error) || 'no data')],
+      ['source', rosFresh() ? 'ROS 2 (rosbridge)' : (ok ? 'HTTP bridge (fallback)' : '—')],
       ['points', ok ? fmt(s.count) : DASH],
       ['rate', ok ? fmt(s.hz, ' Hz', 2) : DASH],
       ['rpm', ok ? fmt(s.rpm, '', 0) : DASH],
@@ -227,6 +293,9 @@ export function mount(root, api = {}) {
       scanUrl = st.scan_url;
       tick();
     }
+    if (st.scan_topic) st_topic = st.scan_topic;
+    if (st.scan_type) st_type = st.scan_type;
+    if (!wired && st.rosbridge) { wired = true; wsUrl = st.rosbridge; connectRos(wsUrl); }
     if (!info.dataset.filled && st.lidar) {
       info.dataset.filled = '1';
       info.replaceChildren(h('div', {
@@ -252,9 +321,12 @@ export function mount(root, api = {}) {
     destroy() {
       dead = true;
       clearInterval(timer);
+      clearTimeout(retryTimer);
       window.removeEventListener('resize', onResize);
       try { if (inflight) inflight.abort(); } catch (e) { /* already settled */ }
       inflight = null;
+      try { if (ws) ws.close(); } catch (e) { /* already gone */ }
+      ws = null;
     },
   };
 }

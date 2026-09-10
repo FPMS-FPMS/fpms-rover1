@@ -23,6 +23,13 @@ confirmed against live hardware on 2026-09-10 by CRC: 419 frames, 0 rejects.
 
 ROVER_HOST = "fpms1.local"
 BRIDGE = "http://%s:8781" % ROVER_HOST
+# ROS 2 Humble is the primary path; the HTTP bridge above is the fallback.
+# Only ONE of them may own the scanner's serial port at a time - the two
+# systemd units declare Conflicts= on each other for exactly that reason - so
+# the frontend tries rosbridge first and falls back if it goes quiet.
+ROSBRIDGE_WS = "ws://%s:9090" % ROVER_HOST
+SCAN_TOPIC = "/scan"
+SCAN_TYPE = "sensor_msgs/msg/LaserScan"
 
 # The scanner's own geometry and limits, so the plot is drawn to scale rather
 # than normalised to whatever the largest return happened to be.
@@ -46,6 +53,9 @@ BODY_MM = None
 def state() -> dict:
     return {
         "host": ROVER_HOST,
+        "rosbridge": ROSBRIDGE_WS,
+        "scan_topic": SCAN_TOPIC,
+        "scan_type": SCAN_TYPE,
         "scan_url": BRIDGE + "/scan",
         "health_url": BRIDGE + "/health",
         "lidar": LIDAR,
