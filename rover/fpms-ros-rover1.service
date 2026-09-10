@@ -11,7 +11,7 @@ Group=dialout
 # Humble nodes with std::bad_alloc.
 Environment=ROS_DOMAIN_ID=20
 Environment=RCUTILS_LOGGING_USE_STDOUT=1
-ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /home/ubuntu/ros2_ws/install/setup.bash && exec ros2 launch fpms_rover1 rover1.launch.py'
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /home/ubuntu/ldlidar_ws/install/setup.bash && source /home/ubuntu/ros2_ws/install/setup.bash && exec ros2 launch fpms_rover1 rover1.launch.py'
 Restart=always
 RestartSec=5
 

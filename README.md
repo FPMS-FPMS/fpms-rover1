@@ -330,3 +330,36 @@ Measured 1 warning per 2 restarts before; **0 across 3 restarts** after.
 Interface 1 carries the streaming endpoints (`0x81`/`0x02`) — interface 0 only
 has `0x84`/`0x05`, which is why control commands never tripped it and only
 streaming did.
+
+## Scanner driver: LDROBOT's own (default) or ours
+
+    ros2 launch fpms_rover1 rover1.launch.py                        # vendor (default)
+    ros2 launch fpms_rover1 rover1.launch.py lidar_driver:=builtin  # our d500_node
+
+**The D500 Developer Kit's scanner is an STL-19P.** Neither LDROBOT repo lists
+"D500" or "STL-19P" by name, but the STL-19P speaks the **LD19** wire protocol —
+which is not a guess: our own LD19 decoder read this exact unit for 436,759
+frames at **zero CRC rejects** before the vendor driver was introduced. So the
+vendor's `LDLiDAR_LD19` profile at 230400 baud is the right one.
+
+Driver: [ldrobotSensorTeam/ldlidar_ros2](https://github.com/ldrobotSensorTeam/ldlidar_ros2),
+built in `~/ldlidar_ws`.
+
+**The vendor driver is better and is now the default.** It publishes the
+scanner's *native* resolution — `angle_increment` 0.0125 rad, **~501 rays per
+revolution**, which is 5000 measurements/s ÷ 10 Hz. Our `d500_node` bins to 360
+and throws that resolution away. It also publishes `/pointcloud2d` and a proper
+`base_link → base_laser` transform.
+
+**Our node is kept, because it reports what the vendor's does not:** CRC
+rejects and frame counters. That is what proved the serial link was healthy
+when the scanner was suspected of freezing. Use `lidar_driver:=builtin` when
+you need to see whether the *link* is healthy rather than the map.
+
+We do not use the vendor's `ld19.launch.py` directly: it hardcodes
+`/dev/ttyUSB0`, which on this rover is the **Yahboom STM32 board**. `ttyUSBn`
+reorders between boots, so ours pins the `by-id` path.
+
+⚠️ The `base_link → base_laser` height of 0.18 m is the **vendor's example
+value**, not a measurement of this rover. Fix it before anything navigates off
+that transform.

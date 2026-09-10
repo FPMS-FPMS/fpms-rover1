@@ -1,6 +1,7 @@
 """rover1.launch.py - everything Rover 1 publishes, plus the bridge the UI uses.
 
-  d500_node          the D500 scanner, as sensor_msgs/LaserScan on /scan
+  d500 scanner       LDROBOT's own driver by default (native ~501 rays);
+                     lidar_driver:=builtin swaps in our d500_node instead
   thermal_node       the Thermal Master P1, as Image + temperature + stats
   yahboom_node       the STM32 board: IMU, attitude, battery, encoders. READ ONLY.
   rosbridge_server   ws://<rover>:9090, which the FPMS Cortex panels connect
@@ -15,7 +16,8 @@ Humble nodes with std::bad_alloc.
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition, UnlessCondition
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -30,7 +32,58 @@ def generate_launch_description():
         'frame_id', default_value='laser',
         description='TF frame the scan is stamped with.')
 
+    # WHICH SCANNER DRIVER
+    # 'vendor' (default) is LDROBOT's own ldlidar_ros2 on the LD19 profile -
+    # the D500 kit's STL-19P speaks that protocol. It publishes the scanner's
+    # NATIVE resolution: angle_increment 0.0125 rad, ~501 rays per revolution,
+    # which is 5000 measurements/s / 10 Hz. Our own d500_node bins to 360 and
+    # throws that resolution away, so the vendor driver is strictly better for
+    # anything that will do mapping.
+    #
+    # 'builtin' selects d500_node instead. It is kept because it is ours: it
+    # reports CRC rejects and frame counts the vendor driver does not expose,
+    # which is what diagnosed the link when the scanner was suspected. Use it
+    # when you need to see whether the SERIAL LINK is healthy, not the map.
+    driver = DeclareLaunchArgument(
+        'lidar_driver', default_value='vendor',
+        description="'vendor' (ldlidar_ros2, native resolution) or 'builtin' "
+                    "(d500_node, exposes CRC/frame counters)")
+    use_vendor = PythonExpression(["'", LaunchConfiguration('lidar_driver'), "' == 'vendor'"])
+
+    d500_vendor = Node(
+        condition=IfCondition(use_vendor),
+        package='ldlidar_ros2',
+        executable='ldlidar_ros2_node',
+        name='d500_vendor',
+        output='screen',
+        parameters=[{
+            'product_name': 'LDLiDAR_LD19',
+            'laser_scan_topic_name': 'scan',
+            'point_cloud_2d_topic_name': 'pointcloud2d',
+            'frame_id': 'base_laser',
+            'port_name': LaunchConfiguration('port'),
+            'serial_baudrate': 230400,
+            'laser_scan_dir': True,
+            'enable_angle_crop_func': False,
+            'angle_crop_min': 135.0,
+            'angle_crop_max': 225.0,
+            'range_min': 0.02,
+            'range_max': 12.0,
+        }],
+    )
+
+    # 0.18 m is the VENDOR'S EXAMPLE height, not a measurement of this rover.
+    # Fix it before anything navigates off this transform.
+    d500_tf = Node(
+        condition=IfCondition(use_vendor),
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_link_to_base_laser',
+        arguments=['0', '0', '0.18', '0', '0', '0', 'base_link', 'base_laser'],
+    )
+
     d500 = Node(
+        condition=UnlessCondition(use_vendor),
         package='fpms_rover1',
         executable='d500_node',
         name='d500_node',
@@ -83,4 +136,5 @@ def generate_launch_description():
         parameters=[{'port': 9090, 'address': '0.0.0.0'}],
     )
 
-    return LaunchDescription([port, frame_id, d500, thermal, yahboom, rosbridge])
+    return LaunchDescription([port, frame_id, driver, d500_vendor, d500_tf,
+                              d500, thermal, yahboom, rosbridge])
