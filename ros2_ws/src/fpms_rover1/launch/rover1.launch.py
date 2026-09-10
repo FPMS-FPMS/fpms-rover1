@@ -57,9 +57,12 @@ def generate_launch_description():
     laser_y = DeclareLaunchArgument(
         'laser_y', default_value='0.0',
         description='drive-axle centre to scanner, +left, metres')
+    # Rover 1 is BOTTOM-LEFT; Rover 2 is bottom-right at the mission stack's
+    # HOME of 842.5. 1000 - 842.5 = 157.5 mirrors it across the arena, and
+    # clears the 150 mm edge_keep with 7.5 mm to spare.
     start_x = DeclareLaunchArgument(
-        'start_x_mm', default_value='842.5',
-        description='where the rover was PLACED, arena mm')
+        'start_x_mm', default_value='157.5',
+        description='where the rover was PLACED, arena mm (bottom-left)')
     start_y = DeclareLaunchArgument(
         'start_y_mm', default_value='157.5',
         description='where the rover was PLACED, arena mm')

@@ -115,9 +115,10 @@ export function mount(root, api = {}) {
   // Which end of the arena the operator is standing at. The stored geometry
   // puts the zones at high y; someone facing the arena from the far side sees
   // them at the BOTTOM. This is a view preference, never a change to the data.
-  // Default matches how the operator describes the arena: M1 bottom-left,
-  // M2 bottom-right, i.e. the zones nearest the bottom of the screen.
-  let flip = true;
+  // The ROVERS are bottom-left and bottom-right; the zones are the far row
+  // they drive towards. So low y renders at the bottom - the conventional
+  // view, start near, goal ahead. Flip swaps to the far-side vantage.
+  let flip = false;
   let maxRange = 4000;
 
   const el = h('div', { class: 'flid' });
@@ -136,7 +137,7 @@ export function mount(root, api = {}) {
   const btnRefresh = h('button', { class: 'rbtn', type: 'button', text: 'Refresh rover' });
   const btnScan = h('button', { class: 'rbtn on', type: 'button', text: 'Scan' });
   const btnMk = h('button', { class: 'rbtn on', type: 'button', text: 'Markers' });
-  const btnFlip = h('button', { class: 'rbtn on', type: 'button', text: 'Flip view' });
+  const btnFlip = h('button', { class: 'rbtn', type: 'button', text: 'Flip view' });
   const btnObs = h('button', { class: 'rbtn on', type: 'button', text: 'Obstacles' });
   const btnPlan = h('button', { class: 'rbtn on', type: 'button', text: 'Route' });
   toggleRow.append(btnScan, btnMk, btnObs, btnPlan, btnFlip, btnRefresh);
@@ -197,9 +198,20 @@ export function mount(root, api = {}) {
   /* The lake sits BETWEEN THE TWO ROVERS, so it is derived, never stored.
    * Returns null while either position is unknown - a guessed point on a map
    * someone will drive from is worse than an empty one. */
+  function rover2Point() {
+    if (r2Fresh()) return { ...r2pose, live: true };
+    // Its station is where it was PUT. Good enough to place the lake, and
+    // flagged as a station rather than a position so nobody reads it as live.
+    if (rover2 && rover2.station) {
+      return { x: rover2.station.x, y: rover2.station.y,
+               hdg: rover2.station.heading_deg, live: false };
+    }
+    return null;
+  }
+
   function lakePoint() {
-    const a = poseFresh() ? pose : null;
-    const b = r2Fresh() ? r2pose : null;
+    const a = poseFresh() ? pose : (arena ? { x: arena.home.x, y: arena.home.y } : null);
+    const b = rover2Point();
     if (!a || !b) return null;
     return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   }
@@ -500,18 +512,23 @@ export function mount(root, api = {}) {
     if (showMarkers) {
       const fs2 = Math.max(10, Math.round(W / 62));
       ctx.font = `600 ${fs2}px ui-monospace, monospace`;
-      if (r2Fresh()) {
+      const r2 = rover2Point();
+      if (r2) {
         const c2 = cssVar('--warn', '#ffcf5c');
         ctx.strokeStyle = c2; ctx.lineWidth = Math.max(1.5, W / 620);
         const rr = Math.max(5, W / 150);
-        ctx.beginPath(); ctx.arc(X(r2pose.x), Y(r2pose.y), rr, 0, Math.PI * 2); ctx.stroke();
-        const a2 = r2pose.hdg * Math.PI / 180, L2 = Math.max(9, W / 40);
-        ctx.beginPath(); ctx.moveTo(X(r2pose.x), Y(r2pose.y));
-        ctx.lineTo(X(r2pose.x + Math.cos(a2) * L2 / s), Y(r2pose.y + Math.sin(a2) * L2 / s));
+        // Dashed while it is only a station, solid once it reports for itself.
+        ctx.setLineDash(r2.live ? [] : [4, 4]);
+        ctx.beginPath(); ctx.arc(X(r2.x), Y(r2.y), rr, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        const a2 = r2.hdg * Math.PI / 180, L2 = Math.max(9, W / 40);
+        ctx.beginPath(); ctx.moveTo(X(r2.x), Y(r2.y));
+        ctx.lineTo(X(r2.x + Math.cos(a2) * L2 / s), Y(r2.y + Math.sin(a2) * L2 / s));
         ctx.stroke();
         ctx.fillStyle = c2;
-        const lw2 = ctx.measureText('ROVER 2').width;
-        ctx.fillText('ROVER 2', X(r2pose.x) - lw2 / 2, Y(r2pose.y) - rr - 5);
+        const lbl2 = r2.live ? 'ROVER 2' : 'ROVER 2 ?';
+        const lw2 = ctx.measureText(lbl2).width;
+        ctx.fillText(lbl2, X(r2.x) - lw2 / 2, Y(r2.y) - rr - 5);
       }
       const lk = lakePoint();
       if (lk) {
@@ -597,13 +614,19 @@ export function mount(root, api = {}) {
         const lw = ctx.measureText(label).width;
         ctx.fillText(label, px - lw / 2, py - rad - Math.max(4, fs * 0.35));
       }
-      // HOME
+      // HOME is Rover 2's start. When Rover 2 is drawn at that same point the
+      // two labels sit on top of each other, so only one is shown - they are
+      // the same place, not two features.
+      const r2p = rover2Point();
+      const homeIsR2 = r2p && Math.hypot(r2p.x - home.x, r2p.y - home.y) < 60;
+      if (!homeIsR2) {
       ctx.strokeStyle = ok; ctx.lineWidth = Math.max(1.4, W / 700);
       const hr = Math.max(6, W / 130);
       ctx.beginPath(); ctx.rect(X(home.x) - hr, Y(home.y) - hr, hr * 2, hr * 2); ctx.stroke();
       const hlw = ctx.measureText('HOME').width;
       ctx.fillStyle = ok;
       ctx.fillText('HOME', X(home.x) - hlw / 2, Y(home.y) - hr - Math.max(4, fs * 0.35));
+      }
     }
 
     // stale banner
@@ -666,7 +689,9 @@ export function mount(root, api = {}) {
       ['standoff', route && route.status === 'ok'
         ? `${route.standoffMm.toFixed(0)} mm from goal` : DASH],
       ['clearance', `${robotRadius} + ${ROUTE_CLEARANCE} mm (unmeasured)`],
-      ['rover 2', r2Fresh() ? `${r2pose.x.toFixed(0)}, ${r2pose.y.toFixed(0)} mm` : 'not reporting'],
+      ['rover 2', r2Fresh() ? `${r2pose.x.toFixed(0)}, ${r2pose.y.toFixed(0)} mm (live)`
+        : (rover2 && rover2.station
+          ? `${rover2.station.x}, ${rover2.station.y} mm (station)` : 'unknown')],
       ['lake', lakePoint()
         ? `${lakePoint().x.toFixed(0)}, ${lakePoint().y.toFixed(0)} mm (derived)`
         : 'needs both rover positions'],

@@ -48,9 +48,12 @@ ROVER2 = {
     "pose_topic": "/rover/arena_pose",
     "pose_type": "geometry_msgs/msg/PoseStamped",
     "rosbridge": "ws://192.168.137.18:9090",
-    "note": "Rover 2 has not been reachable this session. The lake is the "
-            "midpoint of the two rovers, so it cannot be placed until both "
-            "positions are known.",
+    # Rover 2 stands bottom-RIGHT, at the mission stack's HOME. Used only as a
+    # fallback: a LIVE pose from its own rosbridge always wins, because a
+    # station is where it was put, not where it is once it moves.
+    "station": {"x": 842.5, "y": 157.5, "heading_deg": 90.0},
+    "note": "Rover 2 has not been reachable this session, so its station is "
+            "used. A live pose from its own rosbridge overrides it.",
 }
 
 # The scanner's own geometry and limits, so the plot is drawn to scale rather

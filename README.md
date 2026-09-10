@@ -538,3 +538,26 @@ while Rover 2 is off — which it has been all session.
 
 The planner targets the lake once derivable and falls back to the M1/M2
 midpoint until then, so there is always something to plan to.
+
+## Rover placement, and the lake resolving itself
+
+    Rover 1   157.5, 157.5   bottom-LEFT
+    Rover 2   842.5, 157.5   bottom-RIGHT (the mission stack's HOME)
+    LAKE      500.0, 157.5   DERIVED — the midpoint of the two
+
+Rover 2 sits at the mission stack's HOME, so Rover 1 bottom-left is its mirror:
+1000 − 842.5 = **157.5**, which also clears the 150 mm `edge_keep` by 7.5 mm.
+That is now the odometry's `start_x_mm`.
+
+**The lake is still derived, not stored.** A *live* pose from Rover 2's own
+rosbridge always wins; its station is only a fallback, and while it is standing
+in for a live pose Rover 2 is drawn **dashed with a `?`** — a station is where a
+robot was put, not where it is once it moves.
+
+Because the rovers are at the bottom and the zones are the far row they drive
+towards, the view now renders low-y at the bottom — start near, goal ahead.
+`Flip view` switches to the far-side vantage.
+
+Unlike the M1/M2 midpoint, the lake at (500, 157.5) is **inside** the driveable
+arena, so it is a goal the rover can actually reach rather than one it can only
+stand off from.
