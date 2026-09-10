@@ -177,11 +177,20 @@ class ThermalNode(Node):
                 self.errors += 1
                 self.get_logger().warn(f'camera: {type(exc).__name__}: {exc}')
             finally:
+                # disconnect(), not just stop_streaming(): the former releases
+                # the USB interfaces. Without it the claim survives until this
+                # process exits, and a service restart collides with itself -
+                # the kernel logs "did not claim interface 1 before use" and
+                # the incoming node has to retry its way in.
                 try:
                     if cam:
-                        cam.stop_streaming()
+                        cam.disconnect()
                 except Exception:                          # noqa: BLE001
-                    pass
+                    try:
+                        if cam:
+                            cam.stop_streaming()
+                    except Exception:                      # noqa: BLE001
+                        pass
             for _ in range(30):
                 if not (self.running and rclpy.ok()):
                     return

@@ -102,6 +102,7 @@ export function mount(root, api = {}) {
   let source = 'connecting';
   let rosTimes = [];          // arrival stamps, for a windowed rate
   let rosEverUp = false;
+  let wasFresh = false;       // for edge-detecting the feed going stale
   const mountedAt = Date.now();
   let last = null;          // last good scan payload
   let lastErr = null;
@@ -164,8 +165,14 @@ export function mount(root, api = {}) {
     ctx.lineTo(cx + pad * 0.28, cy - R - pad * 0.05);
     ctx.closePath(); ctx.fill();
 
+    // A stopped feed must LOOK stopped. Rendering the last scan at full
+    // strength is indistinguishable from a live one that happens to be
+    // static, which is how a frozen plot gets trusted. The geometry is kept -
+    // it is still the last thing the rover saw - but faded and labelled.
+    const stale = rosEverUp && !rosFresh();
     const pts = (last && last.points) || [];
     const dot = Math.max(1.4, W / 420);
+    if (stale) ctx.globalAlpha = 0.22;
     for (const [angDeg, distMm, inten] of pts) {
       if (!distMm || distMm > maxRange) continue;
       const a = (angDeg - 90) * Math.PI / 180;   // 0 deg at top, clockwise
@@ -181,8 +188,22 @@ export function mount(root, api = {}) {
     ctx.globalAlpha = 1;
 
     // origin
+    ctx.globalAlpha = stale ? 0.22 : 1;
     ctx.fillStyle = accent2;
     ctx.beginPath(); ctx.arc(cx, cy, dot * 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    if (stale) {
+      const age = ((Date.now() - rosAt) / 1000).toFixed(1);
+      const fs = Math.max(13, Math.round(W / 26));
+      ctx.font = `600 ${fs}px system-ui, sans-serif`;
+      const msg = `FEED STOPPED  ${age}s`;
+      const tw = ctx.measureText(msg).width;
+      ctx.fillStyle = 'rgba(0,0,0,.66)';
+      ctx.fillRect(cx - tw / 2 - 12, cy - fs, tw + 24, fs + 14);
+      ctx.fillStyle = '#ff5c8a';
+      ctx.fillText(msg, cx - tw / 2, cy + 4);
+    }
   }
 
   // ---- ROS transport (roslibjs) ----------------------------------------
@@ -276,14 +297,21 @@ export function mount(root, api = {}) {
     const s = last;
     const ok = !!(s && s.ok);
     overlay.className = 'stat ' + (ok ? 'ok' : 'bad');
-    const via = rosFresh() ? 'ROS' : (ok ? 'HTTP' : source);
-    overlay.textContent = ok
-      ? `${via}   ${s.count} pts` + (s.hz ? `   ${s.hz.toFixed(2)} Hz` : '')
-      : ('no scan — ' + (lastErr || (s && s.error) || 'unknown'));
+    const fresh = rosFresh();
+    const via = fresh ? 'ROS' : (ok ? 'HTTP' : source);
+    if (rosEverUp && !fresh) {
+      overlay.className = 'stat bad';
+      overlay.textContent = `FEED STOPPED — last scan ${((Date.now() - rosAt) / 1000).toFixed(1)}s ago`;
+    } else {
+      overlay.textContent = ok
+        ? `${via}   ${s.count} pts` + (s.hz ? `   ${s.hz.toFixed(2)} Hz` : '')
+        : ('no scan — ' + (lastErr || (s && s.error) || 'unknown'));
+    }
 
     kvEl.replaceChildren();
     const rows = [
-      ['status', ok ? 'spinning' : (lastErr || (s && s.error) || 'no data')],
+      ['status', (rosEverUp && !rosFresh()) ? 'FEED STOPPED'
+        : (ok ? 'spinning' : (lastErr || (s && s.error) || 'no data'))],
       ['source', rosFresh() ? 'ROS 2 (rosbridge)' : (ok ? 'HTTP bridge (fallback)' : '—')],
       ['points', ok ? fmt(s.count) : DASH],
       ['rate', ok ? fmt(s.hz, ' Hz', 2) : DASH],
@@ -322,7 +350,16 @@ export function mount(root, api = {}) {
     }
   }
 
-  timer = setInterval(tick, FETCH_MS);
+  // Watchdog. Nothing else repaints when messages STOP arriving, so without
+  // this the canvas keeps the last frame indefinitely and the panel silently
+  // lies about being live.
+  timer = setInterval(() => {
+    if (dead) return;
+    const fresh = rosFresh();
+    if (wasFresh !== fresh) { wasFresh = fresh; paintSide(); draw(); }
+    else if (!fresh && rosEverUp) { draw(); }   // keep the age counter moving
+    tick();
+  }, FETCH_MS);
   const onResize = () => draw();
   window.addEventListener('resize', onResize);
 

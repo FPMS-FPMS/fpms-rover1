@@ -251,12 +251,17 @@ export function mount(root, api = {}) {
 
   function paintThermal() {
     const live = tFresh();
+    // Same rule as the LiDAR plot: a stopped feed must look stopped. A frozen
+    // thermal frame at full brightness is indistinguishable from a still scene.
+    tCanvas.style.opacity = (tFrames > 0 && !live) ? '0.25' : '1';
     tBadge.className = 'badge ' + (live ? 'live' : 'bad');
     if (live && meta) {
       tBadge.textContent = `live  ${parseFloat(meta.fpms_min_c).toFixed(1)}–`
         + `${parseFloat(meta.fpms_max_c).toFixed(1)} °C`;
       cbLo.textContent = parseFloat(meta.fpms_lo_c).toFixed(1) + '°';
       cbHi.textContent = parseFloat(meta.fpms_hi_c).toFixed(1) + '°';
+    } else if (tFrames > 0 && !live) {
+      tBadge.textContent = `FEED STOPPED — ${((Date.now() - tAt) / 1000).toFixed(0)}s`;
     } else {
       tBadge.textContent = live ? 'live' : 'no frames';
     }
@@ -370,7 +375,7 @@ export function mount(root, api = {}) {
 
   const onResize = () => redraw();
   window.addEventListener('resize', onResize);
-  timer = setInterval(grab, FRAME_MS);
+  timer = setInterval(() => { grab(); paintThermal(); }, FRAME_MS);
   grab();
   if (api && api.state) update(api.state);
 

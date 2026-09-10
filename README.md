@@ -296,3 +296,37 @@ installed Cortex that will not start is worse than one without the new tabs:
 
 It backs up the whole tree to `/usr/local/lib/fpms/cortex-backup-<stamp>` first,
 verifies the result afterwards, and supports `--uninstall`.
+
+## Reconnection and stale feeds
+
+**roslibjs does not resubscribe by itself.** When the socket drops — and it
+does; rosbridge logs `WebSocketClosedError: Tried to write to a closed
+websocket` — roslibjs neither reconnects nor replays subscriptions. A panel
+that subscribed once then goes silent forever *while its last message stays on
+screen looking live*. `cortex/web/ros.js` now registers every subscription and
+replays them on each reconnect, retrying the socket with backoff to 15 s.
+
+**A stopped feed must look stopped.** The LiDAR plot used to render the last
+scan indefinitely at full strength, which is indistinguishable from a live
+scanner viewing a static scene — that is how a frozen plot gets trusted. Both
+the LiDAR and thermal views now watchdog their own freshness: geometry fades,
+and the overlay reads `FEED STOPPED — last scan N.Ns ago`. The last frame is
+kept rather than blanked, because it is still the last thing the rover saw.
+
+Verified by killing the ROS stack with a browser attached: live → `FEED
+STOPPED — last scan 6.2s ago` → automatic recovery to `ROS 323 pts 9.91 Hz`
+with no user action.
+
+## Thermal USB handover
+
+`rover/patches/p3-release-interfaces.patch` fixes the vendored driver's
+`disconnect()`, which only did `self.dev = None`. libusb keeps the interface
+claim until the process exits, so a service restart had the outgoing process
+still holding interface 1 while the incoming one started:
+
+    usbfs: process N (thermal_node) did not claim interface 1 before use
+
+Measured 1 warning per 2 restarts before; **0 across 3 restarts** after.
+Interface 1 carries the streaming endpoints (`0x81`/`0x02`) — interface 0 only
+has `0x84`/`0x05`, which is why control commands never tripped it and only
+streaming did.

@@ -1,0 +1,35 @@
+--- /tmp/p3_camera.orig.py	2026-09-10 22:42:07.499537129 +0000
++++ p3_camera.py	2026-09-10 22:42:07.542870036 +0000
+@@ -639,9 +639,31 @@
+         self._chunk_buf = array.array("B", b"\x00" * FRAME_READ_CHUNK)
+ 
+     def disconnect(self) -> None:
+-        """Disconnect from the camera."""
++        """Disconnect from the camera, RELEASING the USB interfaces.
++
++        Dropping the reference alone is not enough: libusb keeps the claim
++        until the process exits and the kernel reaps the fd. A supervisor
++        restarting this program therefore has the outgoing process still
++        holding interface 1 while the incoming one starts, and the kernel logs
++
++            usbfs: process N did not claim interface 1 before use
++
++        Releasing explicitly makes the handover deterministic instead of a
++        race the new process has to retry its way out of.
++        """
+         if self.streaming:
+             self.stop_streaming()
++        if self.dev is not None:
++            # Highest first: interface 1 carries the streaming endpoints.
++            for n in (1, 0):
++                try:
++                    usb.util.release_interface(self.dev, n)
++                except Exception:                      # noqa: BLE001
++                    pass                               # not claimed, or already gone
++            try:
++                usb.util.dispose_resources(self.dev)
++            except Exception:                          # noqa: BLE001
++                pass
+         self.dev = None
+ 
+     def init(self) -> tuple[str, str]:
