@@ -135,6 +135,13 @@ export function mount(root, api = {}) {
   const rangeRow = h('div', { class: 'row' });
   const toggleRow = h('div', { class: 'row' });
   const btnRefresh = h('button', { class: 'rbtn', type: 'button', text: 'Refresh rover' });
+  const missionRow = h('div', { class: 'row' });
+  // Said in the UI, not just in a comment: these act on Rover 2 over ssh.
+  // Rover 1 has no mission service - nothing FPMS is deployed on it - so there
+  // are no Rover 1 mission buttons to put here.
+  const missionNote = h('div', { class: 'small muted', text:
+    'These command ROVER 2 over ssh, not Rover 1. Rover 1 has no mission '
+    + 'service deployed.' });
   const btnScan = h('button', { class: 'rbtn on', type: 'button', text: 'Scan' });
   const btnMk = h('button', { class: 'rbtn on', type: 'button', text: 'Markers' });
   const btnFlip = h('button', { class: 'rbtn', type: 'button', text: 'Flip view' });
@@ -148,6 +155,7 @@ export function mount(root, api = {}) {
     h('h3', { text: 'Obstacles (detected)' }), obsEl,
     h('h3', { text: 'Scan range' }), rangeRow,
     h('h3', { text: 'View' }), toggleRow,
+    h('h3', { text: 'Mission — ROVER 2' }), missionNote, missionRow,
   ]);
   const info = h('div', { class: 'card wide note', 'data-detail': 'full' });
   el.append(plot, side, info);
@@ -437,6 +445,22 @@ export function mount(root, api = {}) {
     ctx.strokeRect(...rect(ek, ek, arena.w - ek, arena.h - ek));
     ctx.setLineDash([]);
 
+    // Real dimensions, stated on the drawing rather than only in a table.
+    {
+      const fsd = Math.max(9, Math.round(W / 80));
+      ctx.font = `${fsd}px ui-monospace, monospace`;
+      ctx.fillStyle = muted;
+      const wl = `${arena.w.toFixed(0)} mm`;
+      const wlw = ctx.measureText(wl).width;
+      ctx.fillText(wl, X(arena.w / 2) - wlw / 2, Y(flip ? arena.h : 0) + fsd * 1.6);
+      ctx.save();
+      ctx.translate(X(0) - fsd * 0.8, Y(arena.h / 2));
+      ctx.rotate(-Math.PI / 2);
+      const hl = `${arena.h.toFixed(0)} mm`;
+      ctx.fillText(hl, -ctx.measureText(hl).width / 2, 0);
+      ctx.restore();
+    }
+
     // 500 mm grid, for scale
     ctx.strokeStyle = line; ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
     for (let gx = 0; gx <= arena.w; gx += 500) {
@@ -461,6 +485,10 @@ export function mount(root, api = {}) {
         const a = (p.hdg + angDeg) * Math.PI / 180;
         const px = p.x + Math.cos(a) * distMm;
         const py = p.y + Math.sin(a) * distMm;
+        // Only what is INSIDE the arena. Returns beyond it are the room the
+        // arena stands in - real, but not part of this map, and drawing them
+        // makes the arena look like it has walls where it does not.
+        if (px < 0 || px > arena.w || py < 0 || py > arena.h) continue;
         ctx.globalAlpha = (stale ? 0.18 : 0.35 + 0.6 * Math.min(1, (inten || 0) / 200));
         ctx.beginPath(); ctx.arc(X(px), Y(py), dot, 0, Math.PI * 2); ctx.fill();
       }
@@ -483,6 +511,14 @@ export function mount(root, api = {}) {
     }
     ctx.fillStyle = accent2;
     ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), Math.max(3, W / 260), 0, Math.PI * 2); ctx.fill();
+    {
+      const fs1 = Math.max(10, Math.round(W / 62));
+      ctx.font = `600 ${fs1}px ui-monospace, monospace`;
+      const lbl = p.live ? 'ROVER 1' : 'ROVER 1 ?';
+      const w1 = ctx.measureText(lbl).width;
+      ctx.fillStyle = accent2;
+      ctx.fillText(lbl, X(p.x) - w1 / 2, Y(p.y) + Math.max(16, W / 42));
+    }
     // heading tick, so which way it faces is unambiguous
     {
       const a2 = p.hdg * Math.PI / 180, L = Math.max(10, W / 34);
@@ -688,6 +724,7 @@ export function mount(root, api = {}) {
         ? `${route.path.length} legs, ${routeLenMm(route).toFixed(0)} mm` : route.status)],
       ['standoff', route && route.status === 'ok'
         ? `${route.standoffMm.toFixed(0)} mm from goal` : DASH],
+      ['arena', arena ? `${arena.w.toFixed(0)} × ${arena.h.toFixed(0)} mm` : DASH],
       ['clearance', `${robotRadius} + ${ROUTE_CLEARANCE} mm (unmeasured)`],
       ['rover 2', r2Fresh() ? `${r2pose.x.toFixed(0)}, ${r2pose.y.toFixed(0)} mm (live)`
         : (rover2 && rover2.station
@@ -699,6 +736,35 @@ export function mount(root, api = {}) {
       ['start moved', route && route.movedStartMm > 1
         ? `${route.movedStartMm.toFixed(0)} mm — rover is inside inflation` : 'no'],
     ]) kvEl.append(h('dt', { text: k }), h('dd', { text: v }));
+  }
+
+  function wireMission(st) {
+    if (missionRow.dataset.filled) return;
+    missionRow.dataset.filled = '1';
+    const acts = st.mission_actions || [];
+    for (const a of acts) {
+      // shutdown halts a rover. It gets a confirm; the rest do not.
+      const destructive = (a === 'shutdown');
+      const b = h('button', { class: 'rbtn', type: 'button',
+                              text: a === 'shutdown' ? 'Shutdown R2' : a });
+      if (destructive) b.style.borderColor = 'var(--bad)';
+      b.addEventListener('click', async () => {
+        if (!api.call) return;
+        if (destructive && !window.confirm(
+            'Shut down ROVER 2 (192.168.137.18)? It will need a physical power '
+            + 'cycle to come back.')) return;
+        b.disabled = true;
+        const was = b.textContent;
+        b.textContent = '…';
+        try { await api.call(st.mission_panel || 'mission', a, {}); }
+        catch (e) { b.textContent = 'failed'; setTimeout(() => { b.textContent = was; }, 2000); }
+        finally { b.disabled = false; if (b.textContent === '…') b.textContent = was; }
+      });
+      missionRow.append(b);
+    }
+    if (st.mission_target) {
+      missionRow.append(h('span', { class: 'small muted', text: '→ ' + st.mission_target }));
+    }
   }
 
   function routeLenMm(r) {
@@ -727,7 +793,10 @@ export function mount(root, api = {}) {
     for (const m of markers) {
       mkEl.append(h('dt', { text: m.id + (m.measured ? '' : ' ?') }),
                   h('dd', { text: `${m.x.toFixed(0)}, ${m.y.toFixed(0)} mm`
-                    + (m.measured ? '' : '  (placeholder)') }));
+                    + (m.measured ? '' : '  (placeholder)')
+                    // The mission stack still drives to its own number.
+                    + (m.stack_x != null && m.stack_x !== m.x
+                      ? `  ⚠ stack says ${m.stack_x}` : '') }));
     }
     if (arena) {
       mkEl.append(h('dt', { text: 'HOME' }),
@@ -748,6 +817,7 @@ export function mount(root, api = {}) {
     if (st.body_mm && !body) { body = st.body_mm; draw(); }
     if (!rosWired && st.rosbridge) { rosWired = true; wireRos(st.rosbridge); }
     if (st.rover2 && !rover2) { rover2 = st.rover2; }
+    if (st.mission_actions) wireMission(st);
     if (rover2 && !r2Wired && rover2.rosbridge) { r2Wired = true; wireRover2(rover2); }
 
     const cp = currentPose();

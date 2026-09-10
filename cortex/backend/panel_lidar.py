@@ -93,21 +93,23 @@ ARENA = {
 }
 
 MARKERS = [
-    # M1 and M2: measured, from the mission stack. Do not edit.
-    {"id": "M1", "x": 412.5, "y": 1357.5, "kind": "zone", "measured": True},
-    {"id": "M2", "x": 842.5, "y": 1357.5, "kind": "zone", "measured": True},
-    # M3: given by the operator 2026-09-10 as "300 mm to the left of M1".
-    # 412.5 - 300 = 112.5, same y as the other zones.
-    # Clears the 262 mm two-zone minimum (zone_radius 131) with 38 mm to spare.
-    {"id": "M3", "x": 112.5, "y": 1357.5, "kind": "zone", "measured": True},
-    # The lake / water refill is BETWEEN THE TWO ROVERS, so it is not a fixed
-    # coordinate at all - it is derived from where the rovers are. It was
-    # briefly hardcoded at the M1/M2 midpoint and that was simply wrong.
+    # Operator geometry, 2026-09-10: "M3 is 300 mm to the left of M1" AND
+    # "M1 should be centred between M2 and M3". Solving both together with M2
+    # fixed gives an even 300 mm pitch:
+    #     M1 = (M2 + M3)/2  and  M3 = M1 - 300   =>   M1 = M2 - 300
+    # 300 mm clears the 262 mm two-zone minimum (zone_radius 131) by 38 mm.
     #
-    # Nothing here defines it. The frontend computes it as the midpoint of
-    # Rover 1's live pose and Rover 2's, and shows nothing while either is
-    # unknown. That way the answer appears the moment the positions do,
-    # instead of a guessed point sitting on the map looking authoritative.
+    # !! THIS MOVES M1 BY 130 mm FROM THE MISSION STACK CONSTANT !!
+    # geometry.py has M1 = 412.5 and carries the warning: "DO NOT re-measure
+    # these into something else. Every failure of the 2026-09-02 session traced
+    # to a zone constant that had drifted." The operator's arena wins here, but
+    # the mission stack has NOT been changed to match - if Rover 2 drives to
+    # M1 it will still go to 412.5. That divergence is deliberate and needs
+    # resolving before the two rovers share a plan.
+    {"id": "M3", "x": 242.5, "y": 1357.5, "kind": "zone", "measured": True},
+    {"id": "M1", "x": 542.5, "y": 1357.5, "kind": "zone", "measured": True,
+     "stack_x": 412.5},
+    {"id": "M2", "x": 842.5, "y": 1357.5, "kind": "zone", "measured": True},
 ]
 
 # Rover 1's footprint is NOT yet measured. Rover 2's is (see panel_rover.py
@@ -174,6 +176,12 @@ def state() -> dict:
         "pose_topic": POSE_TOPIC,
         "pose_type": POSE_TYPE,
         "rover2": ROVER2,
+        # Rover 2's mission controls, surfaced here at the operator's request.
+        # They act on ROVER 2 over ssh, not on Rover 1 - the panel labels them
+        # so nobody presses "start" expecting Rover 1 to move.
+        "mission_panel": "mission",
+        "mission_actions": ["start", "stop", "restart", "shutdown"],
+        "mission_target": "192.168.137.18 (Rover 2)",
         "scan_url": "http://%s:8781/scan" % ip,
         "health_url": "http://%s:8781/health" % ip,
         "lidar": LIDAR,

@@ -578,3 +578,38 @@ Each tab must be checked in its **own fresh page**. Navigating by hash does not
 reload the page, so a panel read straight after a hash change can be caught
 mid-mount and read as broken when it is fine — that artifact cost a debug cycle
 earlier.
+
+## Zone geometry — and a divergence from the mission stack
+
+Operator geometry: *"M3 is 300 mm left of M1"* **and** *"M1 centred between M2
+and M3"*. Both solve together with M2 fixed:
+
+    M1 = (M2 + M3)/2  and  M3 = M1 - 300   =>   M1 = M2 - 300
+
+    M3  242.5      M1  542.5      M2  842.5      even 300 mm pitch
+
+300 mm clears the 262 mm two-zone minimum by 38 mm.
+
+⚠️ **This moves M1 by 130 mm from the mission stack constant.** `geometry.py`
+has M1 = 412.5 and warns: *"DO NOT re-measure these into something else. Every
+failure of the 2026-09-02 session traced to a zone constant that had drifted."*
+
+The operator's arena wins here, but **the mission stack has not been changed to
+match** — if Rover 2 drives to M1 it still goes to 412.5. The panel shows
+`⚠ stack says 412.5` next to M1 so the divergence is visible. **Resolve it
+before the two rovers share a plan.**
+
+## Also on the LiDAR tab
+
+- **Scan is clipped to the arena.** Returns beyond it are the room the arena
+  stands in — real, but not part of this map, and drawing them made the arena
+  look like it had walls where it does not.
+- **Both rovers are labelled**, with a `?` while a position is a station rather
+  than a live pose.
+- **Real dimensions drawn on the plan** — 1000 mm across the bottom, 1200 mm up
+  the side — and in the readout as `arena 1000 × 1200 mm`.
+- **Mission buttons**: `start`, `stop`, `restart`, `Shutdown R2`.
+
+⚠️ Those command **Rover 2** at 192.168.137.18 over ssh, *not* Rover 1 — and the
+panel says so in the UI, not just in a comment. Rover 1 has no mission service
+deployed. `Shutdown` is confirm-guarded; the others are not.
