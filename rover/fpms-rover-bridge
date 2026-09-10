@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""
+FPMS rover bridge - publishes Rover 1's sensors to the ground station.
+
+Runs ON THE ROVER (fpms1, Orange Pi 5 Max). The Cortex on the ground station
+polls it over FPMS_Net. Python 3.10 stdlib + pyserial, nothing else.
+
+Design notes, each of which is load-bearing:
+
+  * The LiDAR is read on ONE background thread into a fixed 360-bin ring. HTTP
+    handlers only ever serialise the last snapshot, so N clients cost the same
+    as one and a slow client can never stall the serial reader.
+  * Every collector is fault-isolated. An unplugged LiDAR must degrade to a
+    missing key and an honest `lidar.ok = false`, never a traceback and never
+    a stale scan presented as live.
+  * Frames are CRC-checked before use. A frame that fails CRC is dropped, not
+    guessed at. `crc_reject` is exported so the UI can show link quality
+    instead of silently rendering garbage.
+  * Nothing here writes to a serial port. The MCU protocol is not known yet,
+    and writing to an unknown MCU can move a motor.
+"""
+
+from __future__ import annotations
+
+import http.server
+import json
+import os
+import socketserver
+import struct
+import threading
+import time
+
+BIND_HOST = "0.0.0.0"
+BIND_PORT = 8781
+
+LIDAR_PORT = ("/dev/serial/by-id/"
+              "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0")
+MCU_PORT = "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
+THERMAL_USB_ID = "3474:45c2"
+
+LIDAR_BAUD = 230400
+HDR, VERLEN, FRAME_LEN, POINTS = 0x54, 0x2C, 47, 12
+BINS = 360                 # one bin per degree
+STALE_AFTER = 1.5          # a bin older than this is not "live"
+
+# LDROBOT CRC8: polynomial 0x4D, init 0x00, no reflection. Verified against
+# real frames on 2026-09-10 - 419 frames, 0 rejects.
+_CRC_T = []
+for _i in range(256):
+    _c = _i
+    for _ in range(8):
+        _c = ((_c << 1) ^ 0x4D) & 0xFF if (_c & 0x80) else (_c << 1) & 0xFF
+    _CRC_T.append(_c)
+
+
+def crc8(buf: bytes) -> int:
+    c = 0
+    for b in buf:
+        c = _CRC_T[(c ^ b) & 0xFF]
+    return c
+
+
+class Lidar:
+    """Reads LD19/D500 frames into a 360-bin ring on its own thread."""
+
+    def __init__(self, port: str):
+        self.port = port
+        self.lock = threading.Lock()
+        self.dist = [0] * BINS          # mm, 0 = no return
+        self.inten = [0] * BINS
+        self.stamp = [0.0] * BINS
+        self.speed_dps = 0.0
+        self.frames = 0
+        self.crc_reject = 0
+        self.last_frame = 0.0
+        self.error = "not started"
+        self.running = True
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        while self.running:
+            try:
+                import serial  # imported here so a missing pyserial is reportable
+                with serial.Serial(self.port, LIDAR_BAUD, timeout=1) as ser:
+                    self.error = ""
+                    self._pump(ser)
+            except Exception as exc:                      # noqa: BLE001
+                self.error = f"{type(exc).__name__}: {exc}"
+                time.sleep(2.0)
+
+    def _pump(self, ser):
+        buf = bytearray()
+        while self.running:
+            chunk = ser.read(940)
+            if not chunk:
+                self.error = "no data from LiDAR (is it spinning?)"
+                return
+            self.error = ""
+            buf += chunk
+            if len(buf) > 8192:                # never let a desync grow forever
+                del buf[:-2048]
+            while len(buf) >= FRAME_LEN:
+                if buf[0] != HDR or buf[1] != VERLEN:
+                    buf.pop(0)
+                    continue
+                frame = bytes(buf[:FRAME_LEN])
+                if crc8(frame[:-1]) != frame[-1]:
+                    self.crc_reject += 1
+                    buf.pop(0)
+                    continue
+                self._ingest(frame)
+                del buf[:FRAME_LEN]
+
+    def _ingest(self, f: bytes):
+        speed, start = struct.unpack_from("<HH", f, 2)
+        end, _ts = struct.unpack_from("<HH", f, 6 + POINTS * 3)
+        span = (end - start) % 36000                 # hundredths of a degree
+        step = span / (POINTS - 1) if POINTS > 1 else 0
+        now = time.time()
+        with self.lock:
+            self.speed_dps = speed
+            self.frames += 1
+            self.last_frame = now
+            for i in range(POINTS):
+                d, q = struct.unpack_from("<HB", f, 6 + i * 3)
+                ang = ((start + step * i) % 36000) / 100.0
+                b = int(ang) % BINS
+                self.dist[b] = d
+                self.inten[b] = q
+                self.stamp[b] = now
+
+    def snapshot(self) -> dict:
+        now = time.time()
+        with self.lock:
+            pts = [
+                [b, self.dist[b], self.inten[b]]
+                for b in range(BINS)
+                if self.dist[b] > 0 and now - self.stamp[b] < STALE_AFTER
+            ]
+            return {
+                "ok": bool(pts) and not self.error,
+                "error": self.error or None,
+                "rpm": round(self.speed_dps / 6.0, 1),
+                "hz": round(self.speed_dps / 360.0, 2),
+                "frames": self.frames,
+                "crc_reject": self.crc_reject,
+                "age_s": round(now - self.last_frame, 2) if self.last_frame else None,
+                "points": pts,
+                "count": len(pts),
+            }
+
+
+# ---------------------------------------------------------------------------
+# Host facts. Every one of these is individually try/excepted: sysfs layout
+# varies, and a missing file must become a missing key, not a 500.
+# ---------------------------------------------------------------------------
+
+def _read(path, cast=str, default=None):
+    try:
+        with open(path) as fh:
+            return cast(fh.read().strip())
+    except Exception:                                    # noqa: BLE001
+        return default
+
+
+def temps() -> dict:
+    out = {}
+    base = "/sys/class/thermal"
+    try:
+        for z in sorted(os.listdir(base)):
+            if not z.startswith("thermal_zone"):
+                continue
+            t = _read(f"{base}/{z}/type")
+            v = _read(f"{base}/{z}/temp", int)
+            if t and v is not None:
+                out[t] = round(v / 1000.0, 1)
+    except Exception:                                    # noqa: BLE001
+        pass
+    return out
+
+
+def wifi() -> dict:
+    """Link facts obtainable WITHOUT privilege.
+
+    Deliberately no SSID: wpa_cli's control socket is root-only and iw is not
+    installed, so the only ways to get it are to give this service privilege
+    or to guess from the subnet. The ground station IS the access point, so it
+    already knows which SSID the rover is on and at what signal - that side is
+    the authoritative one. Reporting null here beats inventing it.
+    """
+    info = {"ssid": None, "signal_dbm": None, "ip": None,
+            "ssid_note": "not readable without root; the ground station's AP "
+                         "knows this authoritatively"}
+    try:
+        with open("/proc/net/wireless") as fh:
+            for line in fh:
+                if line.strip().startswith("wlan0:"):
+                    info["signal_dbm"] = int(float(line.split()[3]))
+    except Exception:                                    # noqa: BLE001
+        pass
+    # Which source address the kernel would pick. UDP connect() sends no
+    # packets - it only does the route lookup - so this costs nothing and
+    # needs no netlink.
+    try:
+        import socket as _s
+        with _s.socket(_s.AF_INET, _s.SOCK_DGRAM) as sk:
+            sk.settimeout(0.5)
+            sk.connect(("192.168.137.1", 9))
+            info["ip"] = sk.getsockname()[0]
+    except Exception:                                    # noqa: BLE001
+        pass
+    return info
+
+
+def _usb_ids() -> set:
+    """Every idVendor:idProduct on the bus, straight from sysfs.
+
+    Replaces shelling out to lsusb: no subprocess, no netlink (which the
+    service sandbox does not allow), and cheap enough to call every tick.
+    """
+    ids = set()
+    base = "/sys/bus/usb/devices"
+    try:
+        for name in os.listdir(base):
+            v = _read(f"{base}/{name}/idVendor")
+            p = _read(f"{base}/{name}/idProduct")
+            if v and p:
+                ids.add(f"{v}:{p}")
+    except Exception:                                    # noqa: BLE001
+        pass
+    return ids
+
+
+def devices() -> dict:
+    """Presence only. Nothing is opened, so nothing gets reset."""
+    ids = _usb_ids()
+    return {
+        "lidar": {"present": os.path.exists(LIDAR_PORT), "path": LIDAR_PORT},
+        "mcu": {"present": os.path.exists(MCU_PORT), "path": MCU_PORT},
+        "thermal_cam": {
+            "present": THERMAL_USB_ID in ids,
+            "usb_id": THERMAL_USB_ID,
+            # Stated plainly so the UI never implies a feed is coming.
+            "driver": None,
+            "usable": False,
+            "note": "on the bus but no kernel driver binds it: vendor-specific "
+                    "USB class 255/240, not UVC, so it is not a V4L2 device",
+        },
+        "camera": {
+            "present": any(os.path.exists(f"/dev/video{n}") for n in range(4)),
+            "usable": False,
+            "note": "no camera is fitted to this rover",
+        },
+    }
+
+
+def health(lidar: Lidar) -> dict:
+    up = _read("/proc/uptime", lambda s: float(s.split()[0]), 0.0)
+    load = _read("/proc/loadavg", lambda s: [float(x) for x in s.split()[:3]], [])
+    mem = {}
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                k, _, v = line.partition(":")
+                if k in ("MemTotal", "MemAvailable"):
+                    mem[k] = int(v.split()[0]) // 1024
+    except Exception:                                    # noqa: BLE001
+        pass
+    t = temps()
+    return {
+        "ok": True,
+        "host": os.uname().nodename,
+        "time": time.time(),
+        "uptime_s": round(up, 1),
+        "load": load,
+        "mem_mb": mem,
+        "temps_c": t,
+        "temp_max_c": max(t.values()) if t else None,
+        "wifi": wifi(),
+        "devices": devices(),
+        "lidar": {k: v for k, v in lidar.snapshot().items() if k != "points"},
+    }
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    server_version = "fpms-rover-bridge/1.0"
+    lidar: Lidar = None                                   # set in main()
+
+    def _send(self, obj, code=200):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        # The Cortex page is served from the ground station, so it is a
+        # cross-origin fetch. This bridge is read-only and lives on the
+        # rover's private AP.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):                                     # noqa: N802
+        path = self.path.split("?")[0].rstrip("/") or "/"
+        try:
+            if path == "/health":
+                self._send(health(self.lidar))
+            elif path == "/scan":
+                snap = self.lidar.snapshot()
+                self._send(snap, 200 if snap["ok"] else 503)
+            elif path == "/":
+                self._send({"service": "fpms-rover-bridge",
+                            "endpoints": ["/health", "/scan"]})
+            else:
+                self._send({"error": "not found"}, 404)
+        except Exception as exc:                          # noqa: BLE001
+            self._send({"error": f"{type(exc).__name__}: {exc}"}, 500)
+
+    def log_message(self, *a):                            # keep journald quiet
+        pass
+
+
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def main():
+    Handler.lidar = Lidar(LIDAR_PORT)
+    with Server((BIND_HOST, BIND_PORT), Handler) as srv:
+        srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

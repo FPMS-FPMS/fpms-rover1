@@ -1,0 +1,35 @@
+#!/bin/bash
+# Inject SSID priority into netplan's generated wpa_supplicant config.
+#
+# netplan has no priority key for wifi. With two access-points in one block,
+# wpa_supplicant keeps whichever it associates with first - on 2026-09-10 that
+# was the home network even though the ground-station AP was 48 dB stronger.
+# This post-processes the generated config so FPMS_Net always wins, while
+# keeping RUCHNIK_EXT as a working fallback.
+#
+# THIS MUST NEVER EXIT NON-ZERO. It runs as ExecStartPre for the supplicant;
+# failing here would stop wpa_supplicant and leave the rover with no wifi at
+# all and no way back in.
+
+CONF=/run/netplan/wpa-wlan0.conf
+
+{
+  [ -f "$CONF" ] || exit 0
+  grep -q 'priority=' "$CONF" && exit 0           # already processed
+  grep -q 'ssid=P"FPMS_Net"' "$CONF" || exit 0    # nothing to prioritise
+
+  TMP=$(mktemp) || exit 0
+  awk '
+    /ssid=P"FPMS_Net"/    { print; print "  priority=10"; print "  ieee80211w=1"; next }
+    /ssid=P"RUCHNIK_EXT"/ { print; print "  priority=1";  next }
+    { print }
+  ' "$CONF" > "$TMP" || { rm -f "$TMP"; exit 0; }
+
+  # only overwrite if awk actually produced a sane file
+  if [ -s "$TMP" ] && grep -q 'priority=10' "$TMP" && grep -q 'ssid=' "$TMP"; then
+    cat "$TMP" > "$CONF"      # rewrite in place, keeping owner and mode
+  fi
+  rm -f "$TMP"
+} >/dev/null 2>&1
+
+exit 0

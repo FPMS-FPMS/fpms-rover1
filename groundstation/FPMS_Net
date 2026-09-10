@@ -1,0 +1,199 @@
+#!/bin/bash
+# FPMS_Net - one command to bring the rover network up on the ground station.
+#
+# The QCA6174 does AP+STA only on ONE SHARED CHANNEL, so this retunes the AP
+# to whatever channel the STA is already on - never the reverse. The laptop
+# keeps its own WiFi association throughout; if it does not, that is a failure
+# and this says so.
+#
+# Safe to run repeatedly. Exit 0 means: ap0 exists, rover-ap is beaconing
+# FPMS_Net, 192.168.137.1 is live, and the STA is still on the same SSID it
+# started on.
+#
+# Installed by Claude 2026-09-10. /usr/local is covered by fpms-integrity;
+# re-take the baseline after editing this file.
+
+set -u
+
+SELF="$(readlink -f "$0")"
+STA_DEV=wlp2s0
+AP_DEV=ap0
+AP_CON=rover-ap            # the real AP profile (mode=ap, ssid=FPMS_Net)
+BAD_CON=FPMS_Net           # a client-mode profile bound to ap0 - must not autoconnect
+AP_MAC=02:11:22:33:44:55
+IW=/usr/sbin/iw
+ROVER2_IP=192.168.137.18
+ROVER1_MAC=8c:cd:fe:09:04:76
+
+# ---- re-exec as root -------------------------------------------------------
+# On the FIRST run this asks for your password once, then installs a NOPASSWD
+# rule scoped to THIS ONE COMMAND so it never asks again. To undo that:
+#     sudo rm /etc/sudoers.d/fpms-net /usr/local/bin/FPMS_Net
+SELF="$(readlink -f "$0")"
+ROOTCOPY=/usr/local/bin/FPMS_Net
+
+if [ "$(id -u)" -ne 0 ]; then
+  TARGET="$SELF"
+  [ -x "$ROOTCOPY" ] && TARGET="$ROOTCOPY"
+  if sudo -n -l "$TARGET" >/dev/null 2>&1; then
+    exec sudo -n "$TARGET" "$@"
+  else
+    echo "  first run: password needed once to make this passwordless from now on"
+    exec sudo "$TARGET" "$@"
+  fi
+fi
+
+if [ -t 1 ]; then B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; Z=$'\e[0m'
+else B=""; R=""; G=""; Y=""; C=""; Z=""; fi
+ok()   { printf '  %s[ ok ]%s %s\n'   "$G" "$Z" "$*"; }
+warn() { printf '  %s[warn]%s %s\n'   "$Y" "$Z" "$*"; }
+die()  { printf '  %s[FAIL]%s %s\n\n' "$R" "$Z" "$*"; exit 1; }
+step() { printf '\n%s%s%s\n' "$B" "$*" "$Z"; }
+
+# ---- make future runs passwordless ----------------------------------------
+# The sudoers rule deliberately names the ROOT-OWNED copy, never the one in
+# ~/.local/bin - a NOPASSWD rule pointing at a user-writable file would be a
+# privilege-escalation hole.
+bootstrap() {
+  [ -f /etc/sudoers.d/fpms-net ] && [ -x "$ROOTCOPY" ] && return 0
+  install -o root -g root -m 0755 "$SELF" "$ROOTCOPY" 2>/dev/null || return 1
+  local t; t=$(mktemp) || return 1
+  printf '%s\n' "aryan ALL=(root) NOPASSWD: $ROOTCOPY" > "$t"
+  if visudo -cf "$t" >/dev/null 2>&1; then
+    install -o root -g root -m 0440 "$t" /etc/sudoers.d/fpms-net
+    rm -f "$t"
+    printf '  %s[ ok ]%s installed - future runs will not ask for a password\n' "$G" "$Z"
+  else
+    rm -f "$t"
+    printf '  %s[warn]%s sudoers rule failed validation, nothing written\n' "$Y" "$Z"
+  fi
+}
+
+bootstrap
+printf '\n%sFPMS_Net%s  rover access point on %s\n' "$B" "$Z" "$(hostname)"
+
+# ---- 1. preflight ----------------------------------------------------------
+step "1. preflight"
+[ -x "$IW" ] || die "$IW missing - iw is not on PATH here, it lives in /usr/sbin"
+nmcli -t -f NAME con show 2>/dev/null | grep -qx "$AP_CON" \
+  || die "connection profile '$AP_CON' does not exist (nmcli con show)"
+
+STA_SSID0=$($IW dev "$STA_DEV" link 2>/dev/null | awk '/SSID:/{print $2}')
+STA_CH=$($IW dev "$STA_DEV" info 2>/dev/null | awk '/channel/{print $2}')
+if [ -n "$STA_SSID0" ]; then
+  ok "STA $STA_DEV associated to $C$STA_SSID0$Z on channel $C$STA_CH$Z (this is NOT touched)"
+else
+  warn "STA $STA_DEV is not associated - AP will use the profile's own channel"
+  STA_CH=""
+fi
+
+PS=$($IW dev "$STA_DEV" get power_save 2>/dev/null | awk -F': ' '{print $2}')
+if [ "$PS" = "off" ]; then ok "wifi power save off"
+else warn "wifi power save is '$PS' - link degrades badly; see 99-fpms-wifi.conf"; fi
+
+# The client-mode 'FPMS_Net' profile is bound to ap0 and would fight rover-ap
+# the moment ap0 appears. Disarm it, idempotently.
+if nmcli -t -f NAME con show 2>/dev/null | grep -qx "$BAD_CON"; then
+  if [ "$(nmcli -g connection.autoconnect con show "$BAD_CON" 2>/dev/null)" = "yes" ]; then
+    nmcli con modify "$BAD_CON" connection.autoconnect no 2>/dev/null \
+      && ok "disarmed autoconnect on client-mode profile '$BAD_CON' (it targets ap0)" \
+      || warn "could not disarm '$BAD_CON' - it may hijack ap0"
+  else
+    ok "client-mode profile '$BAD_CON' already has autoconnect off"
+  fi
+fi
+
+# ---- 2. share one channel --------------------------------------------------
+step "2. one radio, one channel"
+AP_CH=$(nmcli -g 802-11-wireless.channel con show "$AP_CON" 2>/dev/null)
+if [ -n "$STA_CH" ] && [ "$STA_CH" != "$AP_CH" ]; then
+  nmcli con modify "$AP_CON" 802-11-wireless.band bg 802-11-wireless.channel "$STA_CH" \
+    || die "could not retune $AP_CON to channel $STA_CH"
+  ok "retuned $AP_CON from channel $AP_CH to $C$STA_CH$Z to match the STA"
+  AP_CH=$STA_CH
+else
+  ok "$AP_CON already on channel $C$AP_CH$Z - no retune needed"
+fi
+
+# ---- 3. the ap0 interface --------------------------------------------------
+step "3. ap0 interface"
+if $IW dev 2>/dev/null | grep -q "Interface $AP_DEV"; then
+  ok "$AP_DEV already exists"
+else
+  $IW dev "$STA_DEV" interface add "$AP_DEV" type __ap \
+    || die "could not create $AP_DEV - does $STA_DEV support AP+STA?"
+  ip link set "$AP_DEV" address "$AP_MAC" 2>/dev/null
+  ok "created $AP_DEV (mac $AP_MAC)"
+fi
+ip link set "$AP_DEV" up || die "could not bring $AP_DEV up"
+nmcli device set "$AP_DEV" managed yes 2>/dev/null
+ok "$AP_DEV is up and NetworkManager-managed"
+
+# ---- 4. beacon -------------------------------------------------------------
+step "4. bring up $AP_CON"
+if [ "$(nmcli -t -f GENERAL.STATE device show "$AP_DEV" 2>/dev/null | cut -d: -f2)" = "100 (connected)" ] \
+   && nmcli -t -f NAME,DEVICE con show --active 2>/dev/null | grep -qx "$AP_CON:$AP_DEV"; then
+  ok "$AP_CON already active on $AP_DEV"
+else
+  nmcli con up "$AP_CON" ifname "$AP_DEV" >/dev/null 2>&1 \
+    || die "'nmcli con up $AP_CON' failed - run it by hand to see why"
+  ok "$AP_CON activated"
+fi
+
+# ---- 5. prove it -----------------------------------------------------------
+step "5. proof"
+STA_SSID1=$($IW dev "$STA_DEV" link 2>/dev/null | awk '/SSID:/{print $2}')
+if [ -n "$STA_SSID0" ]; then
+  if [ "$STA_SSID1" = "$STA_SSID0" ]; then
+    ok "STA survived - still on $C$STA_SSID1$Z"
+  else
+    die "STA MOVED: was $STA_SSID0, now '${STA_SSID1:-disconnected}'. The AP stole the radio."
+  fi
+fi
+
+AP_SSID=$($IW dev "$AP_DEV" info 2>/dev/null | awk '/ssid/{print $2}')
+AP_LIVE_CH=$($IW dev "$AP_DEV" info 2>/dev/null | awk '/channel/{print $2}')
+[ -n "$AP_SSID" ] || die "$AP_DEV is not beaconing any SSID"
+ok "beaconing $C$AP_SSID$Z on channel $C$AP_LIVE_CH$Z"
+
+AP_IP=$(ip -4 -o addr show "$AP_DEV" 2>/dev/null | awk '{print $4}')
+[ -n "$AP_IP" ] || die "$AP_DEV has no IPv4 address - dnsmasq will not serve leases"
+ok "$AP_DEV has $C$AP_IP$Z"
+
+if pgrep -af "dnsmasq.*$AP_DEV" >/dev/null 2>&1; then ok "dnsmasq serving DHCP on $AP_DEV"
+else warn "no dnsmasq bound to $AP_DEV - clients will not get a lease"; fi
+
+# ---- 6. who is on it -------------------------------------------------------
+step "6. clients"
+STATIONS=$($IW dev "$AP_DEV" station dump 2>/dev/null | grep -c '^Station')
+if [ "${STATIONS:-0}" -gt 0 ]; then
+  ok "$STATIONS station(s) associated:"
+  $IW dev "$AP_DEV" station dump 2>/dev/null | awk '/^Station/{m=$2} /signal:/{printf "         %s  %s dBm\n", m, $2}'
+else
+  printf '  %s....%s no stations yet - power the rover on now\n' "$C" "$Z"
+fi
+
+LEASES=/var/lib/NetworkManager/dnsmasq-$AP_DEV.leases
+if [ -s "$LEASES" ]; then
+  printf '  %s....%s DHCP leases:\n' "$C" "$Z"
+  awk '{printf "         %-17s %-15s %s\n", $2, $3, $4}' "$LEASES"
+else
+  printf '  %s....%s no DHCP leases (rover 2 is static %s and takes none)\n' "$C" "$Z" "$ROVER2_IP"
+fi
+
+# ---- 7. rovers -------------------------------------------------------------
+step "7. rover probe"
+if ping -c1 -W1 "$ROVER2_IP" >/dev/null 2>&1; then ok "rover 2 answering on $ROVER2_IP"
+else printf '  %s....%s rover 2 (%s) not answering\n' "$C" "$Z" "$ROVER2_IP"; fi
+
+R1=$(ip -4 neigh show 2>/dev/null | grep -i "$ROVER1_MAC" | awk '{print $1}' | head -1)
+if [ -n "$R1" ]; then
+  ok "rover 1 (Orange Pi 5 Max) at $C$R1$Z"
+  printf '         ssh -i ~/.ssh/id_ed25519 ubuntu@%s\n' "$R1"
+else
+  printf '  %s....%s rover 1 not in the ARP table yet (mac %s)\n' "$C" "$Z" "$ROVER1_MAC"
+  printf '         it may join RUCHNIK_EXT instead - netplan lists both with no priority\n'
+fi
+
+printf '\n%sFPMS_Net is up.%s  AP %s on ch %s at %s\n\n' "$G" "$Z" "$AP_SSID" "$AP_LIVE_CH" "${AP_IP%%/*}"
+exit 0

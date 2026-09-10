@@ -1,0 +1,25 @@
+[Unit]
+Description=FPMS rover bridge (LiDAR + health over HTTP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# ubuntu is in the dialout group, so the LiDAR is readable without root.
+# Nothing here needs privilege, so it does not get any.
+User=ubuntu
+Group=dialout
+ExecStart=/usr/local/bin/fpms-rover-bridge
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
