@@ -376,11 +376,19 @@ from `panel_field.py` → `FPMSM2PERFECT/fpms_rover2/geometry.py`, which warns:
 *"DO NOT re-measure these into something else. Every failure of the 2026-09-02
 session traced to a zone constant that had drifted."*
 
-    M1     412.5, 1357.5   measured
-    M2     842.5, 1357.5   measured
-    M3     -17.5, 1357.5   PLACEHOLDER
-    WATER  157.5,  157.5   PLACEHOLDER
-    HOME   842.5,  157.5   measured
+    M3     112.5, 1357.5   operator: "300 mm to the left of M1"
+    M1     412.5, 1357.5   mission stack constant
+    LAKE   627.5, 1357.5   operator: "in the middle of both"
+    M2     842.5, 1357.5   mission stack constant
+    HOME   842.5,  157.5   mission stack constant
+
+Left to right along the arena: **M3, M1, LAKE, M2** — M1 bottom-left and M2
+bottom-right as the operator describes them, with the lake between the two.
+
+⚠️ **The lake is geometrically tight.** It sits 215 mm from both M1 and M2, and
+a zone is 131 mm in radius, so anything wider than **84 mm radius overlaps
+them**. It is drawn at 80 mm. If the real lake is bigger, the three features
+genuinely overlap and it is the layout that needs checking, not the drawing.
 
 **Placeholders are drawn dashed with a `?`** and listed as such. A guessed
 point must not look surveyed on a map somebody will drive from.

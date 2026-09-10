@@ -74,20 +74,20 @@ MARKERS = [
     # M1 and M2: measured, from the mission stack. Do not edit.
     {"id": "M1", "x": 412.5, "y": 1357.5, "kind": "zone", "measured": True},
     {"id": "M2", "x": 842.5, "y": 1357.5, "kind": "zone", "measured": True},
-    # M3: REQUESTED, NOT MEASURED. Placed by continuing the M1->M2 spacing
-    # exactly - they are 430 mm apart at y=1357.5, so M3 sits 430 mm left of
-    # M1 at x = -17.5. That is OUTSIDE the driveable arena, which is correct
-    # for a zone: the geometry deliberately puts zones beyond the arena and
-    # obj_bounds runs to x = -100.
+    # M3: given by the operator 2026-09-10 as "300 mm to the left of M1".
+    # 412.5 - 300 = 112.5, same y as the other zones.
+    # Clears the 262 mm two-zone minimum (zone_radius 131) with 38 mm to spare.
+    {"id": "M3", "x": 112.5, "y": 1357.5, "kind": "zone", "measured": True},
+    # The lake / water refill, given as "in the middle of both", i.e. the
+    # midpoint of M1 and M2: (412.5 + 842.5) / 2 = 627.5, same y.
     #
-    # An earlier placeholder at x=157.5 was wrong and it showed on the map:
-    # zone_radius is 131 mm, so two zones need 262 mm between centres, and
-    # 412.5-157.5 = 255 made M3 overlap M1. Any replacement must clear 262 mm.
-    {"id": "M3", "x": -17.5, "y": 1357.5, "kind": "zone", "measured": False},
-    # Water refill station. ALSO NOT MEASURED - Rover 1 carries no water
-    # hardware that has been identified, and no refill point is recorded
-    # anywhere in the mission stack.
-    {"id": "WATER", "x": 157.5, "y": 157.5, "kind": "water", "measured": False},
+    # NOTE THE GEOMETRY IS TIGHT: it sits 215 mm from each of M1 and M2, and a
+    # zone is 131 mm in radius, so anything drawn wider than 84 mm radius
+    # overlaps them. It is therefore drawn at 80 mm and NOT as a zone. If the
+    # lake is physically bigger than that, the three features genuinely
+    # overlap and the layout needs checking, not the drawing.
+    {"id": "LAKE", "x": 627.5, "y": 1357.5, "kind": "water", "measured": True,
+     "radius": 80.0},
 ]
 
 # Rover 1's footprint is NOT yet measured. Rover 2's is (see panel_rover.py

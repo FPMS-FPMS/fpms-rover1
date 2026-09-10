@@ -74,6 +74,12 @@ export function mount(root, api = {}) {
   let last = null, lastErr = null, timer = null, inflight = null;
   let arena = null, markers = [], body = null;
   let showScan = true, showMarkers = true;
+  // Which end of the arena the operator is standing at. The stored geometry
+  // puts the zones at high y; someone facing the arena from the far side sees
+  // them at the BOTTOM. This is a view preference, never a change to the data.
+  // Default matches how the operator describes the arena: M1 bottom-left,
+  // M2 bottom-right, i.e. the zones nearest the bottom of the screen.
+  let flip = true;
   let maxRange = 4000;
 
   const el = h('div', { class: 'flid' });
@@ -91,7 +97,8 @@ export function mount(root, api = {}) {
   const btnRefresh = h('button', { class: 'rbtn', type: 'button', text: 'Refresh rover' });
   const btnScan = h('button', { class: 'rbtn on', type: 'button', text: 'Scan' });
   const btnMk = h('button', { class: 'rbtn on', type: 'button', text: 'Markers' });
-  toggleRow.append(btnScan, btnMk, btnRefresh);
+  const btnFlip = h('button', { class: 'rbtn on', type: 'button', text: 'Flip view' });
+  toggleRow.append(btnScan, btnMk, btnFlip, btnRefresh);
 
   const side = h('div', { class: 'card' }, [
     h('h2', { text: 'Scanner' }), kvEl,
@@ -118,6 +125,9 @@ export function mount(root, api = {}) {
   });
   btnMk.addEventListener('click', () => {
     showMarkers = !showMarkers; btnMk.className = 'rbtn' + (showMarkers ? ' on' : ''); draw();
+  });
+  btnFlip.addEventListener('click', () => {
+    flip = !flip; btnFlip.className = 'rbtn' + (flip ? ' on' : ''); draw();
   });
   // Borrowed from the Control tab: forces the rover poll rather than waiting
   // for the next 2 s tick.
@@ -208,22 +218,35 @@ export function mount(root, api = {}) {
     const s = Math.min((W - pad * 2) / fw, (H - pad * 2) / fh);
     const ox = (W - fw * s) / 2, oy = (H - fh * s) / 2;
     // Arena y grows AWAY from home; screen y grows downward, so y is flipped.
+    // ONLY the y axis flips. Mirroring x as well would swap left and right -
+    // M2 would appear left of M1 - which is a different arena, not a different
+    // viewpoint. Standing at the other end changes which end is near you; it
+    // does not swap your hands.
     const X = (mx) => ox + (mx - ob.x_min) * s;
-    const Y = (my) => oy + (ob.y_max - my) * s;
+    const Y = (my) => flip ? oy + (my - ob.y_min) * s : oy + (ob.y_max - my) * s;
+    // Which arena corner lands top-left depends on the flip, so a rectangle
+    // must be built from BOTH mapped corners. Assuming Y(y_high) is the top
+    // silently drew the arena off the bottom of the canvas once the view was
+    // flipped - the box was there, just outside the viewport.
+    const rect = (x0, y0, x1, y1) => {
+      const sx0 = X(x0), sx1 = X(x1), sy0 = Y(y0), sy1 = Y(y1);
+      return [Math.min(sx0, sx1), Math.min(sy0, sy1),
+              Math.abs(sx1 - sx0), Math.abs(sy1 - sy0)];
+    };
 
     // outer object bounds - faint
     ctx.strokeStyle = line; ctx.lineWidth = Math.max(1, W / 900); ctx.setLineDash([6, 6]);
-    ctx.strokeRect(X(ob.x_min), Y(ob.y_max), fw * s, fh * s);
+    ctx.strokeRect(...rect(ob.x_min, ob.y_min, ob.x_max, ob.y_max));
     ctx.setLineDash([]);
 
     // the driveable arena
     ctx.strokeStyle = muted; ctx.lineWidth = Math.max(1.4, W / 620);
-    ctx.strokeRect(X(0), Y(arena.h), arena.w * s, arena.h * s);
+    ctx.strokeRect(...rect(0, 0, arena.w, arena.h));
 
     // edge-keep inset: where the rover CENTRE may not go
     const ek = arena.edge_keep;
     ctx.strokeStyle = line; ctx.setLineDash([3, 5]);
-    ctx.strokeRect(X(ek), Y(arena.h - ek), (arena.w - 2 * ek) * s, (arena.h - 2 * ek) * s);
+    ctx.strokeRect(...rect(ek, ek, arena.w - ek, arena.h - ek));
     ctx.setLineDash([]);
 
     // 500 mm grid, for scale
@@ -280,24 +303,36 @@ export function mount(root, api = {}) {
       for (const m of markers) {
         const px = X(m.x), py = Y(m.y);
         const col = m.kind === 'water' ? accent2 : (m.measured ? ok : warn);
-        const rad = (m.kind === 'zone' ? arena.zone_radius : 90) * s;
+        // A marker may carry its own radius - the lake does, because it sits
+        // 215 mm from M1 and M2 and anything wider than 84 mm overlaps them.
+        const radMm = m.radius || (m.kind === 'zone' ? arena.zone_radius : 90);
+        const rad = radMm * s;
         ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.4, W / 700);
         // Unmeasured markers are DASHED. A placeholder must not look like a
         // surveyed point on a map someone will drive from.
         ctx.setLineDash(m.measured ? [] : [5, 4]);
         ctx.beginPath(); ctx.arc(px, py, rad, 0, Math.PI * 2); ctx.stroke();
+        if (m.kind === 'water') {           // the lake reads as a body, not a target
+          ctx.globalAlpha = 0.18; ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = 1;
+        }
         ctx.setLineDash([]);
         ctx.beginPath(); ctx.moveTo(px - rad * 0.35, py); ctx.lineTo(px + rad * 0.35, py);
         ctx.moveTo(px, py - rad * 0.35); ctx.lineTo(px, py + rad * 0.35); ctx.stroke();
         ctx.fillStyle = col;
         const label = m.id + (m.measured ? '' : ' ?');
-        ctx.fillText(label, px + rad + 4, py - 2);
+        // Centred ABOVE the marker. To the right, a label sits between two
+        // circles and reads as belonging to the wrong one - which it did:
+        // "M1" appeared to label the lake.
+        const lw = ctx.measureText(label).width;
+        ctx.fillText(label, px - lw / 2, py - rad - Math.max(4, fs * 0.35));
       }
       // HOME
       ctx.strokeStyle = ok; ctx.lineWidth = Math.max(1.4, W / 700);
       const hr = Math.max(6, W / 130);
       ctx.beginPath(); ctx.rect(X(home.x) - hr, Y(home.y) - hr, hr * 2, hr * 2); ctx.stroke();
-      ctx.fillStyle = ok; ctx.fillText('HOME', X(home.x) + hr + 4, Y(home.y) - 2);
+      const hlw = ctx.measureText('HOME').width;
+      ctx.fillStyle = ok;
+      ctx.fillText('HOME', X(home.x) - hlw / 2, Y(home.y) - hr - Math.max(4, fs * 0.35));
     }
 
     // stale banner
