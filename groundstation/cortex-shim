@@ -1,0 +1,40 @@
+#!/bin/bash
+# cortex - open the FPMS Cortex WITH the Rover 1 tabs.
+#
+# The installed tree at /usr/local/lib/fpms/cortex has no Control/LiDAR/Cameras
+# panels; those live in the staging tree until they are installed system-wide
+# (which needs root). ~/.local/bin comes before /usr/local/bin on PATH, so this
+# shadows the stock launcher and points it at the staging tree instead.
+#
+# To make this permanent and delete this shim:
+#   sudo cp ~/fpms-dev/cortex-rover/backend/panel_{control,lidar,cameras}.py \
+#           /usr/local/lib/fpms/cortex/backend/
+#   sudo cp ~/fpms-dev/cortex-rover/web/panel_{control,lidar,cameras}.js \
+#           ~/fpms-dev/cortex-rover/web/app.js /usr/local/lib/fpms/cortex/web/
+#   sudo fpms-integrity baseline
+#   rm ~/.local/bin/cortex
+set -u
+STAGE="$HOME/fpms-dev/cortex-rover/backend/cortex_core.py"
+PORT="${FPMS_CORTEX_PORT:-8770}"
+PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/fpms-cortex.pid"
+
+if [ ! -f "$STAGE" ]; then
+    echo "staging tree missing at $STAGE - falling back to the installed Cortex" >&2
+    exec /usr/local/bin/fpms-app "$@"
+fi
+
+# A backend started from the INSTALLED tree is already on this port and would
+# keep serving the old UI, so retire it before starting ours. Matched by the
+# port it holds, not by a name pattern that could match this script.
+for p in $(pgrep -f "cortex_core.py" 2>/dev/null); do
+    if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- "--port $PORT"; then
+        if ! tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q "fpms-dev/cortex-rover"; then
+            kill "$p" 2>/dev/null
+            rm -f "$PIDFILE"
+            sleep 1
+        fi
+    fi
+done
+
+export FPMS_CORTEX_BACKEND="$STAGE"
+exec /usr/local/bin/fpms-app "$@"

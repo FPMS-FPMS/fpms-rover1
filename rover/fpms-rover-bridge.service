@@ -2,9 +2,6 @@
 Description=FPMS rover bridge (LiDAR + health over HTTP)
 After=network-online.target
 Wants=network-online.target
-# See fpms-ros-rover1.service: one owner for the scanner's serial port.
-# This is the FALLBACK path - start it only when the ROS stack is down.
-Conflicts=fpms-ros-rover1.service
 
 [Service]
 Type=simple
@@ -12,6 +9,9 @@ Type=simple
 # Nothing here needs privilege, so it does not get any.
 User=ubuntu
 Group=dialout
+# health only: the ROS stack owns the scanner. Set to 'full' ONLY
+# when fpms-ros-rover1 is stopped, or both corrupt each other's reads.
+Environment=FPMS_BRIDGE_MODE=health
 ExecStart=/usr/local/bin/fpms-rover-bridge
 Restart=always
 RestartSec=3

@@ -99,6 +99,16 @@ class ThermalNode(Node):
 
     # -- capture -----------------------------------------------------------
     def _run(self):
+        # Deliberately step DOWN off real-time. The unit runs SCHED_FIFO for
+        # the scanner and STM32 readers, whose serial buffers overflow if they
+        # are late. This node PNG-encodes at 8 fps - that is throughput work
+        # with no latency requirement, and letting it preempt the readers
+        # would trade a real deadline for an imaginary one.
+        try:
+            os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
+            self.get_logger().info('capture thread on SCHED_OTHER (not RT)')
+        except Exception as exc:                           # noqa: BLE001
+            self.get_logger().warn(f'could not leave RT: {exc}')
         if self.driver_path not in sys.path:
             sys.path.insert(0, self.driver_path)
         while self.running and rclpy.ok():

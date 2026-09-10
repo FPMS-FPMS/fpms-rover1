@@ -30,6 +30,17 @@ import urllib.request
 ROVER_HOST = "fpms1.local"
 BRIDGE = "http://%s:8781" % ROVER_HOST
 
+# The HTTP bridge runs in health-only mode and never opens the scanner, so the
+# live sensor values come from ROS. Host facts (temperatures, uptime, the USB
+# inventory) still come over HTTP because nothing publishes them to ROS yet.
+ROSBRIDGE_WS = "ws://%s:9090" % ROVER_HOST
+TOPICS = {
+    "battery": ("/rover/battery", "sensor_msgs/msg/BatteryState"),
+    "scan": ("/scan", "sensor_msgs/msg/LaserScan"),
+    "imu": ("/imu/data_raw", "sensor_msgs/msg/Imu"),
+    "attitude": ("/rover/attitude", "geometry_msgs/msg/Vector3Stamped"),
+}
+
 POLL_INTERVAL = 2.0
 HTTP_TIMEOUT = 3.0
 STALE_AFTER = 8.0          # older than this and we stop calling the link up
@@ -93,6 +104,8 @@ def state() -> dict:
     return {
         "host": ROVER_HOST,
         "bridge": BRIDGE,
+        "rosbridge": ROSBRIDGE_WS,
+        "topics": {k: {"topic": t, "type": ty} for k, (t, ty) in TOPICS.items()},
         "up": bool(snap["fresh"]),
         "error": snap["error"],
         "age_s": snap["age_s"],

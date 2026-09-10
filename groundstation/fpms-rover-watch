@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""fpms-rover-watch - tell the operator when Rover 1 is up and streaming.
+
+Runs as a systemd USER service on the ground station so it has the desktop
+session, which is what notify-send needs.
+
+WHAT "CONNECTED" MEANS HERE
+----------------------------
+Not "it pings". A rover that answers ICMP but whose ROS stack has not come up
+yet is not something you can open the Cortex on - notifying then trains the
+operator to ignore the notification. So the test is that **rosbridge accepts a
+TCP connection on 9090**, which only happens once the ROS stack is actually
+running and publishing.
+
+It is deliberately edge-triggered with hysteresis: one notification per
+transition, and a drop has to persist for several polls before it counts. WiFi
+blips, and a notification that fires every time a packet is lost is noise.
+"""
+
+import os
+import socket
+import subprocess
+import sys
+import time
+
+HOST = os.environ.get("FPMS_ROVER_HOST", "fpms1.local")
+ROSBRIDGE_PORT = 9090
+POLL_SECS = 5.0
+# A single failed poll is a wifi blip, not a disconnect.
+MISSES_BEFORE_DOWN = 3
+
+
+def streaming() -> bool:
+    """True when rosbridge answers - i.e. the ROS stack is actually up."""
+    try:
+        with socket.create_connection((HOST, ROSBRIDGE_PORT), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+def notify(title: str, body: str, urgency: str = "normal", icon: str = "network-wireless"):
+    env = dict(os.environ)
+    env.setdefault("DISPLAY", ":0.0")
+    env.setdefault("DBUS_SESSION_BUS_ADDRESS",
+                   f"unix:path=/run/user/{os.getuid()}/bus")
+    try:
+        subprocess.run(
+            ["notify-send", "--urgency", urgency, "--icon", icon,
+             "--expire-time", "15000", "--app-name", "FPMS", title, body],
+            env=env, timeout=10, check=False)
+    except Exception as exc:                                # noqa: BLE001
+        print(f"notify failed: {exc}", file=sys.stderr, flush=True)
+
+
+def main():
+    up = None            # None = first pass, so the initial state is announced
+    misses = 0
+    while True:
+        now_up = streaming()
+        if now_up:
+            misses = 0
+            if up is not True:
+                notify("Rover 1 connected",
+                       f"{HOST} is streaming. Open Cortex to view it.",
+                       urgency="critical", icon="network-wireless")
+                print(f"[{time.strftime('%H:%M:%S')}] rover connected", flush=True)
+                up = True
+        else:
+            misses += 1
+            if up is not False and misses >= MISSES_BEFORE_DOWN:
+                # Not "critical": the rover being off is a normal state, and
+                # there is no remote power-on to act on anyway.
+                notify("Rover 1 disconnected",
+                       f"{HOST} is no longer streaming.",
+                       urgency="normal", icon="network-offline")
+                print(f"[{time.strftime('%H:%M:%S')}] rover disconnected", flush=True)
+                up = False
+        time.sleep(POLL_SECS)
+
+
+if __name__ == "__main__":
+    main()

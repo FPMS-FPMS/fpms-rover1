@@ -1,0 +1,14 @@
+[Unit]
+Description=FPMS: notify when Rover 1 is up and streaming
+# A user service, not a system one: notify-send needs the desktop session.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/fpms-rover-watch
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

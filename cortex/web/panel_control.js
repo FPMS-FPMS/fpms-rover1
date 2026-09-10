@@ -69,6 +69,16 @@ function uptime(s) {
 }
 
 export function mount(root, api = {}) {
+  // Live sensor values come from ROS; the HTTP bridge only supplies host facts
+  // (temperatures, uptime, USB inventory) because nothing publishes those to
+  // ROS yet. Battery in particular is ROS-only - it is the number that tells
+  // you whether the rover can still complete a run.
+  let cws = null, cwired = false, cretry = null;
+  let ros = { at: 0, battery: null, scanHz: null, scanCount: null, attitude: null };
+  let scanTimes = [];
+  const rosFresh = () => (Date.now() - ros.at) < 4000;
+  let dead = false;
+
   const el = h('div', { class: 'fctl' });
   root.replaceChildren(h('style', { text: CSS }), el);
 
@@ -141,9 +151,53 @@ export function mount(root, api = {}) {
     finally { btnRefresh.disabled = false; btnRefresh.textContent = 'Refresh now'; }
   });
 
+  function connectRos(url, topics) {
+    if (dead) return;
+    try { cws = new WebSocket(url); } catch (e) { retryRos(url, topics); return; }
+    cws.onopen = () => {
+      if (dead) return;
+      for (const k of Object.keys(topics)) {
+        cws.send(JSON.stringify({ op: 'subscribe', topic: topics[k].topic,
+                                  type: topics[k].type }));
+      }
+    };
+    cws.onmessage = (ev) => {
+      if (dead) return;
+      let m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m || !m.msg) return;
+      ros.at = Date.now();
+      if (m.topic === topics.battery.topic) {
+        ros.battery = m.msg.voltage;
+      } else if (m.topic === topics.scan.topic) {
+        const now = Date.now();
+        scanTimes.push(now);
+        // Rate measured over a short window, not since connect - a stall must
+        // show up as the rate falling, not be hidden by a long average.
+        while (scanTimes.length && now - scanTimes[0] > 3000) scanTimes.shift();
+        ros.scanHz = scanTimes.length > 1
+          ? (scanTimes.length - 1) / ((now - scanTimes[0]) / 1000) : null;
+        ros.scanCount = (m.msg.ranges || []).filter(
+          (r) => r !== null && isFinite(r)).length;
+      } else if (m.topic === topics.attitude.topic) {
+        ros.attitude = m.msg.vector;
+      }
+    };
+    cws.onclose = () => { if (!dead) retryRos(url, topics); };
+    cws.onerror = () => { try { cws.close(); } catch (e) { /* closing */ } };
+  }
+  function retryRos(url, topics) {
+    clearTimeout(cretry);
+    cretry = setTimeout(() => { if (!dead) connectRos(url, topics); }, 3000);
+  }
+
   function update(full) {
     const st = ((full || {}).panels || {})[PANEL];
     if (!st) return;
+    if (!cwired && st.rosbridge && st.topics) {
+      cwired = true;
+      connectRos(st.rosbridge, st.topics);
+    }
 
     const up = !!st.up;
     linkDot.className = 'dot ' + (up ? 'ok' : 'bad');
@@ -165,6 +219,12 @@ export function mount(root, api = {}) {
       ['wifi signal', up ? fmt(w.signal_dbm, ' dBm') : DASH],
       ['rover ip', up ? (w.ip || DASH) : DASH],
       ['hottest', up ? fmt(st.temp_max_c, ' °C', 1) : DASH],
+      ['battery', rosFresh() && ros.battery != null
+        ? fmt(ros.battery, ' V', 1) : DASH],
+      ['attitude', rosFresh() && ros.attitude
+        ? `r ${(ros.attitude.x * 57.2958).toFixed(1)}°  `
+          + `p ${(ros.attitude.y * 57.2958).toFixed(1)}°  `
+          + `y ${(ros.attitude.z * 57.2958).toFixed(1)}°` : DASH],
     ]);
 
     temps.replaceChildren();
@@ -177,13 +237,16 @@ export function mount(root, api = {}) {
     }
 
     const L = st.lidar || {};
+    const viaRos = rosFresh();
     kv(lidKv, [
-      ['status', up ? (L.ok ? 'spinning' : (L.error || 'no data')) : DASH],
-      ['rate', up ? fmt(L.hz, ' Hz', 2) : DASH],
-      ['rpm', up ? fmt(L.rpm, '', 1) : DASH],
-      ['points now', up ? fmt(L.count) : DASH],
-      ['frames read', up ? fmt(L.frames) : DASH],
-      ['CRC rejects', up ? fmt(L.crc_reject) : DASH],
+      ['source', viaRos ? 'ROS 2 (rosbridge)'
+        : (L.ok ? 'HTTP bridge' : (up ? 'not streaming' : DASH))],
+      ['status', viaRos ? 'spinning'
+        : (up ? (L.ok ? 'spinning' : 'owned by the ROS stack') : DASH)],
+      ['rate', viaRos ? fmt(ros.scanHz, ' Hz', 2) : (L.ok ? fmt(L.hz, ' Hz', 2) : DASH)],
+      ['returns', viaRos ? fmt(ros.scanCount) : (L.ok ? fmt(L.count) : DASH)],
+      ['rpm', L.ok ? fmt(L.rpm, '', 1) : DASH],
+      ['CRC rejects', L.ok ? fmt(L.crc_reject) : DASH],
     ]);
 
     devs.replaceChildren();
@@ -205,5 +268,17 @@ export function mount(root, api = {}) {
   }
 
   if (api && api.state) update(api.state);
-  return { update, destroy() {} };
+  // Repaint between telemetry snapshots so ROS values do not look frozen
+  // while waiting for the next SSE tick.
+  const tick = setInterval(() => { if (api && api.state) update(api.state); }, 1000);
+  return {
+    update,
+    destroy() {
+      dead = true;
+      clearInterval(tick);
+      clearTimeout(cretry);
+      try { if (cws) cws.close(); } catch (e) { /* already gone */ }
+      cws = null;
+    },
+  };
 }

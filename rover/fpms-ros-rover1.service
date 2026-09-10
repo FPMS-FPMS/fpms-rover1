@@ -2,11 +2,6 @@
 Description=FPMS Rover 1 ROS 2 stack (LD19 scanner + rosbridge)
 After=network-online.target
 Wants=network-online.target
-# The scanner's serial port has ONE owner. Linux will happily let both this
-# and the HTTP bridge open it, and then each gets a fraction of the bytes and
-# BOTH silently produce corrupt scans - no error, just wrong geometry. So the
-# two are declared mutually exclusive: starting either one stops the other.
-Conflicts=fpms-rover-bridge.service
 
 [Service]
 Type=simple
@@ -19,6 +14,22 @@ Environment=RCUTILS_LOGGING_USE_STDOUT=1
 ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /home/ubuntu/ros2_ws/install/setup.bash && exec ros2 launch fpms_rover1 rover1.launch.py'
 Restart=always
 RestartSec=5
+
+# REAL-TIME SCHEDULING
+# The scanner reader and the STM32 reader are latency-critical: both are
+# draining a serial port with a finite kernel buffer, and a late read is a
+# dropped frame, not a slow one. SCHED_FIFO at a MODEST priority keeps them
+# ahead of ordinary work without letting them own the machine.
+#
+# 20, not 90: nothing here needs to preempt kernel threads, and a runaway RT
+# task at high priority on a rover is how you lose the ability to SSH in.
+# /proc/sys/kernel/sched_rt_runtime_us is 950000, which reserves 5% of every
+# period for non-RT work - that is the safety valve. NEVER set it to -1.
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=20
+# ROS 2 allocates continuously; paging an RT thread out defeats the point.
+LimitRTPRIO=49
+LimitMEMLOCK=infinity
 
 NoNewPrivileges=yes
 LockPersonality=yes

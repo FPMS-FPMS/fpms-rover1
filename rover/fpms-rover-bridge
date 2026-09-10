@@ -33,6 +33,18 @@ import time
 BIND_HOST = "0.0.0.0"
 BIND_PORT = 8781
 
+# MODE: "full" opens the scanner and serves /scan as well as /health.
+#       "health" NEVER opens the serial port at all.
+#
+# The scanner has one owner. When the ROS stack owns it, this must run in
+# health mode - not merely "fail to open it", because Linux lets BOTH
+# processes open the same tty and then each gets a fraction of the bytes and
+# both silently produce corrupt scans. Health mode is the safe coexistence:
+# host temperatures, uptime and the device inventory need no serial access, so
+# the Cortex Control tab keeps working while ROS publishes the scan.
+MODE = os.environ.get("FPMS_BRIDGE_MODE", "full").strip().lower()
+LIDAR_ENABLED = MODE != "health"
+
 LIDAR_PORT = ("/dev/serial/by-id/"
               "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0")
 MCU_PORT = "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
@@ -278,7 +290,12 @@ def health(lidar: Lidar) -> dict:
         "temp_max_c": max(t.values()) if t else None,
         "wifi": wifi(),
         "devices": devices(),
-        "lidar": {k: v for k, v in lidar.snapshot().items() if k != "points"},
+        "mode": MODE,
+        "lidar": ({k: v for k, v in lidar.snapshot().items() if k != "points"}
+                  if lidar is not None else
+                  {"ok": False, "owned_by": "ros",
+                   "error": "scanner is owned by the ROS stack; this bridge is "
+                            "in health-only mode and never opens the port"}),
     }
 
 
@@ -305,8 +322,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if path == "/health":
                 self._send(health(self.lidar))
             elif path == "/scan":
-                snap = self.lidar.snapshot()
-                self._send(snap, 200 if snap["ok"] else 503)
+                if self.lidar is None:
+                    self._send({"ok": False, "owned_by": "ros",
+                                "error": "health-only mode: the ROS stack owns "
+                                         "the scanner, subscribe to /scan"}, 503)
+                else:
+                    snap = self.lidar.snapshot()
+                    self._send(snap, 200 if snap["ok"] else 503)
             elif path == "/":
                 self._send({"service": "fpms-rover-bridge",
                             "endpoints": ["/health", "/scan"]})
@@ -325,7 +347,7 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def main():
-    Handler.lidar = Lidar(LIDAR_PORT)
+    Handler.lidar = Lidar(LIDAR_PORT) if LIDAR_ENABLED else None
     with Server((BIND_HOST, BIND_PORT), Handler) as srv:
         srv.serve_forever()
 
