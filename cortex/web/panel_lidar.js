@@ -20,6 +20,23 @@ import { connect, release, subscribe } from './ros.js';
 
 const PANEL = 'lidar';
 const FETCH_MS = 200;
+
+/* OBSTACLE DETECTION
+ * The zones and HOME are FIXED; obstacles move between runs, so they are
+ * detected rather than configured. Method and constants are Rover 2's, from
+ * INTERNATIONALS_ROVER2.py - a scan return is an obstacle if it is inside the
+ * arena, not near a waypoint, and not near a wall. Everything left is
+ * clustered.
+ *
+ * WAYPOINT_EXCLUDE is 150 mm there. A zone is 131 mm in radius, so 150 clears
+ * the vase itself with 19 mm to spare - tight, deliberately: the point is to
+ * still SEE an obstacle standing close to a zone.
+ */
+const WAYPOINT_EXCLUDE_MM = 150;
+const WALL_MARGIN_MM = 30;      // returns this close to a wall ARE the wall
+const CLUSTER_RADIUS_MM = 220;  // CLUSTER_RADIUS_MM
+const MIN_CLUSTER_PTS = 3;      // fewer than this is noise, not an object
+const MAX_CLUSTERS = 30;
 const RANGES = [1000, 2000, 4000, 8000, 12000];
 
 const CSS = `
@@ -73,7 +90,8 @@ export function mount(root, api = {}) {
   const mountedAt = Date.now();
   let last = null, lastErr = null, timer = null, inflight = null;
   let arena = null, markers = [], body = null;
-  let showScan = true, showMarkers = true;
+  let showScan = true, showMarkers = true, showObs = true;
+  let obstacles = [];
   // Which end of the arena the operator is standing at. The stored geometry
   // puts the zones at high y; someone facing the arena from the far side sees
   // them at the BOTTOM. This is a view preference, never a change to the data.
@@ -92,17 +110,20 @@ export function mount(root, api = {}) {
 
   const kvEl = h('dl', { class: 'kv' });
   const mkEl = h('dl', { class: 'kv' });
+  const obsEl = h('dl', { class: 'kv' });
   const rangeRow = h('div', { class: 'row' });
   const toggleRow = h('div', { class: 'row' });
   const btnRefresh = h('button', { class: 'rbtn', type: 'button', text: 'Refresh rover' });
   const btnScan = h('button', { class: 'rbtn on', type: 'button', text: 'Scan' });
   const btnMk = h('button', { class: 'rbtn on', type: 'button', text: 'Markers' });
   const btnFlip = h('button', { class: 'rbtn on', type: 'button', text: 'Flip view' });
-  toggleRow.append(btnScan, btnMk, btnFlip, btnRefresh);
+  const btnObs = h('button', { class: 'rbtn on', type: 'button', text: 'Obstacles' });
+  toggleRow.append(btnScan, btnMk, btnObs, btnFlip, btnRefresh);
 
   const side = h('div', { class: 'card' }, [
     h('h2', { text: 'Scanner' }), kvEl,
-    h('h3', { text: 'Markers' }), mkEl,
+    h('h3', { text: 'Markers (fixed)' }), mkEl,
+    h('h3', { text: 'Obstacles (detected)' }), obsEl,
     h('h3', { text: 'Scan range' }), rangeRow,
     h('h3', { text: 'View' }), toggleRow,
   ]);
@@ -125,6 +146,9 @@ export function mount(root, api = {}) {
   });
   btnMk.addEventListener('click', () => {
     showMarkers = !showMarkers; btnMk.className = 'rbtn' + (showMarkers ? ' on' : ''); draw();
+  });
+  btnObs.addEventListener('click', () => {
+    showObs = !showObs; btnObs.className = 'rbtn' + (showObs ? ' on' : ''); draw();
   });
   btnFlip.addEventListener('click', () => {
     flip = !flip; btnFlip.className = 'rbtn' + (flip ? ' on' : ''); draw();
@@ -175,11 +199,65 @@ export function mount(root, api = {}) {
         last = { ok: true, points: pts, count: pts.length, hz, rpm: hz * 60,
                  rays: (m.ranges || []).length, frames: null, crc_reject: null, age_s: 0 };
         lastErr = null;
-        paintSide(); draw();
+        obstacles = detectObstacles(pts, { x: arena ? arena.home.x : 0,
+                                           y: arena ? arena.home.y : 0,
+                                           hdg: arena ? arena.home.heading_deg : 90 });
+        paintSide(); paintObstacles(); draw();
       });
     } catch (e) {
       if (!dead) { source = 'roslib: ' + (e.message || e); paintSide(); }
     }
+  }
+
+  /* Scan returns that are neither a wall nor a known fixture, grouped.
+   * Positions inherit the ASSUMED pose - without localisation an obstacle's
+   * arena coordinate is only as good as the guess that the rover is at HOME.
+   * That is stated on the canvas; it is not a detail to bury. */
+  function detectObstacles(points, pose) {
+    if (!arena || !points || !points.length) return [];
+    const kept = [];
+    for (const [angDeg, distMm] of points) {
+      if (!distMm || distMm > maxRange) continue;
+      const a = (pose.hdg + angDeg) * Math.PI / 180;
+      const wx = pose.x + Math.cos(a) * distMm;
+      const wy = pose.y + Math.sin(a) * distMm;
+      // outside the arena entirely
+      if (wx < 0 || wx > arena.w || wy < 0 || wy > arena.h) continue;
+      // the walls themselves
+      if (wx < WALL_MARGIN_MM || wx > arena.w - WALL_MARGIN_MM ||
+          wy < WALL_MARGIN_MM || wy > arena.h - WALL_MARGIN_MM) continue;
+      // known fixtures: the zones, the lake and HOME are not obstacles
+      let fixture = false;
+      for (const m of markers) {
+        if (Math.hypot(wx - m.x, wy - m.y) < WAYPOINT_EXCLUDE_MM) { fixture = true; break; }
+      }
+      if (!fixture && Math.hypot(wx - arena.home.x, wy - arena.home.y) < WAYPOINT_EXCLUDE_MM) {
+        fixture = true;
+      }
+      if (fixture) continue;
+      kept.push([wx, wy]);
+    }
+    // Greedy clustering against a running centroid - enough for a few objects
+    // on a 1 x 1.2 m floor, and cheap enough to run every frame.
+    const out = [];
+    for (const [x, y] of kept) {
+      let hit = null;
+      for (const c of out) {
+        if (Math.hypot(x - c.x, y - c.y) <= CLUSTER_RADIUS_MM) { hit = c; break; }
+      }
+      if (hit) {
+        hit.n++; hit.sx += x; hit.sy += y;
+        hit.x = hit.sx / hit.n; hit.y = hit.sy / hit.n;
+        hit.minx = Math.min(hit.minx, x); hit.maxx = Math.max(hit.maxx, x);
+        hit.miny = Math.min(hit.miny, y); hit.maxy = Math.max(hit.maxy, y);
+      } else if (out.length < MAX_CLUSTERS) {
+        out.push({ x, y, sx: x, sy: y, n: 1, minx: x, maxx: x, miny: y, maxy: y });
+      }
+    }
+    return out.filter((c) => c.n >= MIN_CLUSTER_PTS).map((c) => ({
+      x: c.x, y: c.y, n: c.n,
+      w: Math.max(40, c.maxx - c.minx), d: Math.max(40, c.maxy - c.miny),
+    }));
   }
 
   // ---- drawing ---------------------------------------------------------
@@ -296,6 +374,22 @@ export function mount(root, api = {}) {
     ctx.fillStyle = accent2;
     ctx.beginPath(); ctx.arc(X(pose.x), Y(pose.y), Math.max(3, W / 260), 0, Math.PI * 2); ctx.fill();
 
+    // ---- detected obstacles ---------------------------------------------
+    if (showObs && obstacles.length) {
+      const bad = cssVar('--bad', '#ff5c8a');
+      ctx.font = `600 ${Math.max(9, Math.round(W / 78))}px ui-monospace, monospace`;
+      for (const o of obstacles) {
+        const bw = o.w * s, bd = o.d * s;
+        ctx.strokeStyle = bad; ctx.lineWidth = Math.max(1.3, W / 780);
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(X(o.x) - bw / 2, Y(o.y) - bd / 2, bw, bd);
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.14; ctx.fillStyle = bad;
+        ctx.fillRect(X(o.x) - bw / 2, Y(o.y) - bd / 2, bw, bd);
+        ctx.globalAlpha = 1;
+      }
+    }
+
     // ---- markers ---------------------------------------------------------
     if (showMarkers) {
       const fs = Math.max(10, Math.round(W / 62));
@@ -386,7 +480,21 @@ export function mount(root, api = {}) {
       ['returns', okk ? fmt(s.count) : DASH],
       ['rate', okk ? fmt(s.hz, ' Hz', 2) : DASH],
       ['rpm', okk ? fmt(s.rpm, '', 0) : DASH],
+      ['obstacles', showObs ? String(obstacles.length) : 'hidden'],
     ]) kvEl.append(h('dt', { text: k }), h('dd', { text: v }));
+  }
+
+  function paintObstacles() {
+    obsEl.replaceChildren();
+    if (!obstacles.length) {
+      obsEl.append(h('dt', { text: '—' }), h('dd', { text: 'none detected' }));
+      return;
+    }
+    obstacles.slice(0, 8).forEach((o, i) => {
+      obsEl.append(h('dt', { text: '#' + (i + 1) }),
+                   h('dd', { text: `${o.x.toFixed(0)}, ${o.y.toFixed(0)} mm  `
+                     + `(${o.w.toFixed(0)}x${o.d.toFixed(0)}, ${o.n} pts)` }));
+    });
   }
 
   function paintMarkers() {

@@ -408,3 +408,26 @@ and Scan/Markers visibility toggles.
 
 Note: in the Rover 2 code `M1,M2 = left; M3,M4 = right` refers to **motor
 indices** in `set_motor(m1,m2,m3,m4)` — nothing to do with these markers.
+
+## Obstacles are detected, not configured
+
+The rover, the zones, the lake and HOME are **fixed**; obstacles move between
+runs. So the panel detects them from the scan rather than taking a coordinate.
+
+Method and constants are **Rover 2's**, from `INTERNATIONALS_ROVER2.py` — a
+scan return counts as an obstacle when it is:
+
+- inside the arena,
+- **not** within 150 mm of a waypoint (a zone is 131 mm in radius, so 150
+  clears the vase with 19 mm to spare — tight on purpose, so an obstacle
+  standing close to a zone is still seen), and
+- **not** within 30 mm of a wall (those returns *are* the wall).
+
+What survives is clustered at 220 mm (`CLUSTER_RADIUS_MM`), with clusters under
+3 points dropped as noise and a cap of 30. Each is drawn as a dashed box and
+listed with its centre, extent and point count.
+
+⚠️ Positions inherit the **assumed pose**. Without localisation an obstacle's
+arena coordinate is only as good as the guess that the rover is at HOME. Real
+obstacle coordinates need odometry — the Yahboom board already publishes
+encoders and IMU, so that is buildable.
