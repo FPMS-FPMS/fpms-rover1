@@ -21,6 +21,9 @@ The scanner is an LDROBOT D500 on the CP2102 bridge. Frame format was
 confirmed against live hardware on 2026-09-10 by CRC: 419 frames, 0 rejects.
 """
 
+import threading
+import time
+
 ROVER_HOST = "fpms1.local"
 BRIDGE = "http://%s:8781" % ROVER_HOST
 # ROS 2 Humble is the primary path; the HTTP bridge above is the fallback.
@@ -50,14 +53,62 @@ LIDAR = {
 BODY_MM = None
 
 
+
+# ---------------------------------------------------------------------------
+# Resolve the rover to an IP, once, and hand the frontend an IP-based URL.
+#
+# WHY NOT JUST GIVE THE BROWSER "fpms1.local":
+# Chrome uses its own async DNS resolver, which on Linux does NOT go through
+# nsswitch - so an mDNS name that resolves perfectly from the shell can fail
+# inside the page, and every ROS-fed value (scan, battery, attitude, thermal)
+# goes dark at once with no error the operator can see. Resolving here, in
+# Python, uses the system resolver where mDNS does work.
+# It also removes an mDNS lookup from every poll; that was costing ~550 ms.
+# ---------------------------------------------------------------------------
+_RESOLVED = {"ip": None, "at": 0.0}
+_RESOLVE_TTL = 300.0
+_RESOLVING = {"busy": False}
+
+
+def _resolve_bg():
+    """Refresh the cached IP off the panel thread."""
+    try:
+        import socket
+        ip = socket.getaddrinfo(ROVER_HOST, None, socket.AF_INET)[0][4][0]
+        _RESOLVED["ip"], _RESOLVED["at"] = ip, time.time()
+    except Exception:                                    # noqa: BLE001
+        pass
+    finally:
+        _RESOLVING["busy"] = False
+
+
+def rover_ip(default=ROVER_HOST):
+    """Current IP for the rover. NEVER BLOCKS.
+
+    state() cost drives how often the registry runs a panel, so a blocking
+    getaddrinfo here is self-defeating: the mDNS lookup measured ~47 ms, which
+    pushed the refresh interval out to 76 SECONDS. So a stale cache is
+    refreshed on a background thread and the old value is returned meanwhile.
+    """
+    now = time.time()
+    if _RESOLVED["ip"] and (now - _RESOLVED["at"]) < _RESOLVE_TTL:
+        return _RESOLVED["ip"]
+    if not _RESOLVING["busy"]:
+        _RESOLVING["busy"] = True
+        threading.Thread(target=_resolve_bg, daemon=True).start()
+    return _RESOLVED["ip"] or default
+
 def state() -> dict:
+    ip = rover_ip()
     return {
         "host": ROVER_HOST,
-        "rosbridge": ROSBRIDGE_WS,
+        "ip": ip,
+        # IP, not the .local name - see rover_ip() for why.
+        "rosbridge": "ws://%s:9090" % ip,
         "scan_topic": SCAN_TOPIC,
         "scan_type": SCAN_TYPE,
-        "scan_url": BRIDGE + "/scan",
-        "health_url": BRIDGE + "/health",
+        "scan_url": "http://%s:8781/scan" % ip,
+        "health_url": "http://%s:8781/health" % ip,
         "lidar": LIDAR,
         "body_mm": BODY_MM,
         "body_note": "Rover 1's chassis has not been measured yet, so no "

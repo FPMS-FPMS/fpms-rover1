@@ -22,6 +22,8 @@
  *
  * mount(root, api) -> { update(state), destroy() }
  */
+import { connect, release, subscribe } from './ros.js';
+
 const PANEL = 'cameras';
 
 const FRAME_MS = 320;          // ~3 fps. The source is 5 fps; faster only burns CPU.
@@ -97,8 +99,9 @@ export function mount(root, api = {}) {
   let paused = false;
   // Thermal arrives over rosbridge, not through panel state: a 12 KB PNG in
   // the SSE snapshot would be broadcast to every client on every tick.
-  let tws = null, twired = false, tretry = null;
-  let tAt = 0, tFrames = 0, tStats = null, tTopics = null;
+  let rosUrl = null, twired = false, onStatus = null;
+  let tUnsubs = [];
+  let tAt = 0, tFrames = 0, tStats = null;
   let tObjUrl = null;
   let timer = null;
   let busy = false;
@@ -121,25 +124,17 @@ export function mount(root, api = {}) {
     return new Blob([u8], { type: mime });
   }
 
-  function connectThermal(url, topics) {
-    if (dead) return;
-    try { tws = new WebSocket(url); } catch (e) { retryThermal(url, topics); return; }
-    tws.onopen = () => {
-      if (dead) return;
-      tws.send(JSON.stringify({ op: 'subscribe', topic: topics.image_topic,
-                                type: topics.image_type }));
-      tws.send(JSON.stringify({ op: 'subscribe', topic: topics.stats_topic,
-                                type: topics.stats_type }));
-    };
-    tws.onmessage = (ev) => {
-      if (dead) return;
-      let m;
-      try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (!m || !m.msg) return;
-      if (m.topic === topics.image_topic && m.msg.data) {
-        // Object URLs, not data: URLs - a 12 KB base64 string per frame at
-        // 8 fps churns far more memory as a string than as a Blob.
-        const blob = b64ToBlob(m.msg.data, 'image/' + (m.msg.format || 'png'));
+  async function wireThermal(url, t) {
+    rosUrl = url;
+    onStatus = (ok) => { if (!ok && !dead) paintThermal(); };
+    try {
+      const { ROSLIB, ros } = await connect(url, onStatus);
+      if (dead) { release(url, onStatus); return; }
+      tUnsubs.push(subscribe(ROSLIB, ros, t.image_topic, t.image_type, (m) => {
+        if (dead || !m.data) return;
+        // Object URLs, not data: URLs - 12 KB of base64 per frame at 8 fps
+        // churns far more memory as a string than as a Blob.
+        const blob = b64ToBlob(m.data, 'image/' + (m.format || 'png'));
         const next = URL.createObjectURL(blob);
         const prev = tObjUrl;
         tObjUrl = next;
@@ -148,19 +143,17 @@ export function mount(root, api = {}) {
         thermBody.style.display = 'none';
         if (prev) setTimeout(() => URL.revokeObjectURL(prev), 250);
         tAt = Date.now(); tFrames++;
-      } else if (m.topic === topics.stats_topic && m.msg.data) {
-        tStats = m.msg.data;
+        paintThermal();
+      }));
+      tUnsubs.push(subscribe(ROSLIB, ros, t.stats_topic, t.stats_type, (m) => {
+        if (dead || !m.data) return;
+        tStats = m.data;
         tAt = Date.now();
-      }
-      paintThermal();
-    };
-    tws.onclose = () => { if (!dead) retryThermal(url, topics); };
-    tws.onerror = () => { try { tws.close(); } catch (e) { /* closing */ } };
-  }
-
-  function retryThermal(url, topics) {
-    clearTimeout(tretry);
-    tretry = setTimeout(() => { if (!dead) connectThermal(url, topics); }, 3000);
+        paintThermal();
+      }));
+    } catch (e) {
+      console.error('cameras: roslib', e);
+    }
   }
 
   function paintThermal() {
@@ -230,8 +223,7 @@ export function mount(root, api = {}) {
     const t = st.thermal || {};
     if (!twired && t.usable && t.rosbridge && t.image_topic) {
       twired = true;
-      tTopics = t;
-      connectThermal(t.rosbridge, t);
+      wireThermal(t.rosbridge, t);
     }
     if (!tFresh()) {
       thermImg.style.display = 'none';
@@ -291,9 +283,9 @@ export function mount(root, api = {}) {
     destroy() {
       dead = true;
       clearInterval(timer);
-      clearTimeout(tretry);
-      try { if (tws) tws.close(); } catch (e) { /* already gone */ }
-      tws = null;
+      for (const u of tUnsubs) { try { u(); } catch (e) { /* gone */ } }
+      tUnsubs = [];
+      if (rosUrl) { release(rosUrl, onStatus); rosUrl = null; }
       // Object URLs are not garbage collected on their own.
       if (tObjUrl) { try { URL.revokeObjectURL(tObjUrl); } catch (e) { /* gone */ } tObjUrl = null; }
       // Release /dev/video0 now. The backend watchdog would get there in ~6 s,

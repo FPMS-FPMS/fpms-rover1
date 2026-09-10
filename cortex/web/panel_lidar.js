@@ -13,6 +13,8 @@
  *
  * mount(root, api) -> { update(state), destroy() }
  */
+import { connect, release, subscribe } from './ros.js';
+
 const PANEL = 'lidar';
 
 const FETCH_MS = 200;          // 5 Hz. The scanner is 10 Hz; this is plenty.
@@ -86,8 +88,15 @@ export function mount(root, api = {}) {
   }
   paintButtons();
 
+  // Every mutable declared up front: these are closed over by callbacks that
+  // can fire before mount() finishes, and a `let` referenced above its own
+  // declaration throws a ReferenceError that silently kills the panel.
   let dead = false;
   let scanUrl = null;
+  let rosUrl = null, rosWired = false, unsub = null, onStatus = null;
+  let stTopic = '/scan', stType = 'sensor_msgs/msg/LaserScan';
+  let rosAt = 0;
+  let source = 'connecting';
   // ROS is primary, HTTP is the fallback. Only one of them can own the
   // scanner at a time (the two systemd units on the rover declare Conflicts=
   // on each other), so this prefers rosbridge and drops to HTTP only when ROS
@@ -177,13 +186,13 @@ export function mount(root, api = {}) {
     ctx.beginPath(); ctx.arc(cx, cy, dot * 1.6, 0, Math.PI * 2); ctx.fill();
   }
 
-  // ---- ROS transport ---------------------------------------------------
+  // ---- ROS transport (roslibjs) ----------------------------------------
   function rosFresh() { return (Date.now() - rosAt) < 2000; }
 
   /* A LaserScan is evenly spaced rays from angle_min; this turns it into the
-   * [angleDeg, distMm, intensity] triples the plot already draws. Infinite
-   * and out-of-band rays are DROPPED, not clamped - ROS uses +inf for "no
-   * return", and clamping it to range_max would draw a solid wall at 12 m. */
+   * [angleDeg, distMm, intensity] triples the plot draws. Infinite and
+   * out-of-band rays are DROPPED, not clamped - ROS uses +inf for "no return",
+   * and clamping it to range_max would draw a solid wall at max range. */
   function fromLaserScan(m) {
     const out = [];
     const rr = m.ranges || [];
@@ -200,37 +209,27 @@ export function mount(root, api = {}) {
     return out;
   }
 
-  function connectRos(url) {
-    if (dead) return;
-    try { ws = new WebSocket(url); } catch (e) { retryRos(url); return; }
-    ws.onopen = () => {
-      if (dead) return;
-      ws.send(JSON.stringify({ op: 'subscribe', topic: st_topic, type: st_type }));
-    };
-    ws.onmessage = (ev) => {
-      if (dead) return;
-      let m;
-      try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (!m || m.topic !== st_topic || !m.msg) return;
-      const pts = fromLaserScan(m.msg);
-      rosAt = Date.now();
-      source = 'ROS';
-      last = { ok: true, points: pts, count: pts.length,
-               hz: last && last.hz ? last.hz : 0, rpm: last && last.rpm ? last.rpm : 0,
-               frames: null, crc_reject: null, age_s: 0 };
-      lastErr = null;
-      paintSide(); draw();
-    };
-    ws.onclose = () => { if (!dead) retryRos(url); };
-    ws.onerror = () => { try { ws.close(); } catch (e) { /* already closing */ } };
+  async function wireRos(url) {
+    rosUrl = url;
+    onStatus = (ok, detail) => { if (!ok && !dead) { source = detail; paintSide(); } };
+    try {
+      const { ROSLIB, ros } = await connect(url, onStatus);
+      if (dead) { release(url, onStatus); return; }
+      unsub = subscribe(ROSLIB, ros, stTopic, stType, (m) => {
+        if (dead) return;
+        const pts = fromLaserScan(m);
+        rosAt = Date.now();
+        source = 'ROS';
+        last = { ok: true, points: pts, count: pts.length,
+                 hz: (last && last.hz) || 0, rpm: (last && last.rpm) || 0,
+                 frames: null, crc_reject: null, age_s: 0 };
+        lastErr = null;
+        paintSide(); draw();
+      });
+    } catch (e) {
+      if (!dead) { source = 'roslib: ' + (e.message || e); paintSide(); }
+    }
   }
-
-  function retryRos(url) {
-    clearTimeout(retryTimer);
-    retryTimer = setTimeout(() => { if (!dead) connectRos(url); }, 3000);
-  }
-
-  let st_topic = '/scan', st_type = 'sensor_msgs/msg/LaserScan';
 
   // ---- fetching (HTTP fallback) ----------------------------------------
   async function tick() {
@@ -293,9 +292,9 @@ export function mount(root, api = {}) {
       scanUrl = st.scan_url;
       tick();
     }
-    if (st.scan_topic) st_topic = st.scan_topic;
-    if (st.scan_type) st_type = st.scan_type;
-    if (!wired && st.rosbridge) { wired = true; wsUrl = st.rosbridge; connectRos(wsUrl); }
+    if (st.scan_topic) stTopic = st.scan_topic;
+    if (st.scan_type) stType = st.scan_type;
+    if (!rosWired && st.rosbridge) { rosWired = true; wireRos(st.rosbridge); }
     if (!info.dataset.filled && st.lidar) {
       info.dataset.filled = '1';
       info.replaceChildren(h('div', {
@@ -321,12 +320,11 @@ export function mount(root, api = {}) {
     destroy() {
       dead = true;
       clearInterval(timer);
-      clearTimeout(retryTimer);
       window.removeEventListener('resize', onResize);
       try { if (inflight) inflight.abort(); } catch (e) { /* already settled */ }
       inflight = null;
-      try { if (ws) ws.close(); } catch (e) { /* already gone */ }
-      ws = null;
+      if (unsub) { unsub(); unsub = null; }
+      if (rosUrl) { release(rosUrl, onStatus); rosUrl = null; }
     },
   };
 }

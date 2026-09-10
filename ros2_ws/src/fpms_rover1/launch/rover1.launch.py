@@ -1,6 +1,6 @@
 """rover1.launch.py - everything Rover 1 publishes, plus the bridge the UI uses.
 
-  ld19_node          the D500 scanner, as sensor_msgs/LaserScan on /scan
+  d500_node          the D500 scanner, as sensor_msgs/LaserScan on /scan
   thermal_node       the Thermal Master P1, as Image + temperature + stats
   yahboom_node       the STM32 board: IMU, attitude, battery, encoders. READ ONLY.
   rosbridge_server   ws://<rover>:9090, which the FPMS Cortex panels connect
@@ -30,10 +30,10 @@ def generate_launch_description():
         'frame_id', default_value='laser',
         description='TF frame the scan is stamped with.')
 
-    ld19 = Node(
+    d500 = Node(
         package='fpms_rover1',
-        executable='ld19_node',
-        name='ld19_node',
+        executable='d500_node',
+        name='d500_node',
         output='screen',
         parameters=[{
             'port': LaunchConfiguration('port'),
@@ -83,4 +83,4 @@ def generate_launch_description():
         parameters=[{'port': 9090, 'address': '0.0.0.0'}],
     )
 
-    return LaunchDescription([port, frame_id, ld19, thermal, yahboom, rosbridge])
+    return LaunchDescription([port, frame_id, d500, thermal, yahboom, rosbridge])

@@ -13,6 +13,8 @@
  *
  * mount(root, api) -> { update(state), destroy() }
  */
+import { connect, release, subscribe } from './ros.js';
+
 const PANEL = 'control';
 
 const CSS = `
@@ -73,11 +75,14 @@ export function mount(root, api = {}) {
   // (temperatures, uptime, USB inventory) because nothing publishes those to
   // ROS yet. Battery in particular is ROS-only - it is the number that tells
   // you whether the rover can still complete a run.
-  let cws = null, cwired = false, cretry = null;
+  // All hoisted: these are closed over by subscription callbacks that can fire
+  // before mount() returns.
+  let dead = false;
+  let rosUrl = null, rosWired = false, onStatus = null;
+  let unsubs = [];
   let ros = { at: 0, battery: null, scanHz: null, scanCount: null, attitude: null };
   let scanTimes = [];
   const rosFresh = () => (Date.now() - ros.at) < 4000;
-  let dead = false;
 
   const el = h('div', { class: 'fctl' });
   root.replaceChildren(h('style', { text: CSS }), el);
@@ -151,52 +156,44 @@ export function mount(root, api = {}) {
     finally { btnRefresh.disabled = false; btnRefresh.textContent = 'Refresh now'; }
   });
 
-  function connectRos(url, topics) {
-    if (dead) return;
-    try { cws = new WebSocket(url); } catch (e) { retryRos(url, topics); return; }
-    cws.onopen = () => {
-      if (dead) return;
-      for (const k of Object.keys(topics)) {
-        cws.send(JSON.stringify({ op: 'subscribe', topic: topics[k].topic,
-                                  type: topics[k].type }));
-      }
-    };
-    cws.onmessage = (ev) => {
-      if (dead) return;
-      let m;
-      try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (!m || !m.msg) return;
-      ros.at = Date.now();
-      if (m.topic === topics.battery.topic) {
-        ros.battery = m.msg.voltage;
-      } else if (m.topic === topics.scan.topic) {
+  async function wireRos(url, topics) {
+    rosUrl = url;
+    onStatus = () => {};
+    try {
+      const { ROSLIB, ros: conn } = await connect(url, onStatus);
+      if (dead) { release(url, onStatus); return; }
+      const on = (key, cb) => {
+        const t = topics[key];
+        if (!t) return;
+        unsubs.push(subscribe(ROSLIB, conn, t.topic, t.type, (m) => {
+          if (dead) return;
+          ros.at = Date.now();
+          cb(m);
+        }));
+      };
+      on('battery', (m) => { ros.battery = m.voltage; });
+      on('attitude', (m) => { ros.attitude = m.vector; });
+      on('scan', (m) => {
         const now = Date.now();
         scanTimes.push(now);
-        // Rate measured over a short window, not since connect - a stall must
-        // show up as the rate falling, not be hidden by a long average.
+        // Rate over a short window, not since connect: a stall must show up as
+        // the rate falling, not be hidden inside a long average.
         while (scanTimes.length && now - scanTimes[0] > 3000) scanTimes.shift();
         ros.scanHz = scanTimes.length > 1
           ? (scanTimes.length - 1) / ((now - scanTimes[0]) / 1000) : null;
-        ros.scanCount = (m.msg.ranges || []).filter(
-          (r) => r !== null && isFinite(r)).length;
-      } else if (m.topic === topics.attitude.topic) {
-        ros.attitude = m.msg.vector;
-      }
-    };
-    cws.onclose = () => { if (!dead) retryRos(url, topics); };
-    cws.onerror = () => { try { cws.close(); } catch (e) { /* closing */ } };
-  }
-  function retryRos(url, topics) {
-    clearTimeout(cretry);
-    cretry = setTimeout(() => { if (!dead) connectRos(url, topics); }, 3000);
+        ros.scanCount = (m.ranges || []).filter((r) => r !== null && isFinite(r)).length;
+      });
+    } catch (e) {
+      console.error('control: roslib', e);
+    }
   }
 
   function update(full) {
     const st = ((full || {}).panels || {})[PANEL];
     if (!st) return;
-    if (!cwired && st.rosbridge && st.topics) {
-      cwired = true;
-      connectRos(st.rosbridge, st.topics);
+    if (!rosWired && st.rosbridge && st.topics) {
+      rosWired = true;
+      wireRos(st.rosbridge, st.topics);
     }
 
     const up = !!st.up;
@@ -276,9 +273,9 @@ export function mount(root, api = {}) {
     destroy() {
       dead = true;
       clearInterval(tick);
-      clearTimeout(cretry);
-      try { if (cws) cws.close(); } catch (e) { /* already gone */ }
-      cws = null;
+      for (const u of unsubs) { try { u(); } catch (e) { /* gone */ } }
+      unsubs = [];
+      if (rosUrl) { release(rosUrl, onStatus); rosUrl = null; }
     },
   };
 }

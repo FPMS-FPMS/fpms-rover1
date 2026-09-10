@@ -19,7 +19,7 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
-            'ld19_node = fpms_rover1.ld19_node:main',
+            'd500_node = fpms_rover1.d500_node:main',
             'thermal_node = fpms_rover1.thermal_node:main',
             'yahboom_node = fpms_rover1.yahboom_node:main',
         ],

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""ld19_node - publishes the LDROBOT D500 (LD19 protocol) scanner as sensor_msgs/LaserScan.
+"""d500_node - publishes the LDROBOT D500 scanner as sensor_msgs/LaserScan.
+
+The D500 speaks the LD19 wire protocol, which is why an LD19 frame decoder
+works against it unchanged. The HARDWARE IS A D500.
 
 THE FRAME FORMAT HERE IS CONFIRMED, NOT ASSUMED
 ------------------------------------------------
@@ -58,9 +61,9 @@ def crc8(buf: bytes) -> int:
     return c
 
 
-class LD19Node(Node):
+class D500Node(Node):
     def __init__(self):
-        super().__init__('ld19_node')
+        super().__init__('d500_node')
 
         self.declare_parameter('port', DEFAULT_PORT)
         self.declare_parameter('baud', 230400)
@@ -100,7 +103,7 @@ class LD19Node(Node):
         self.running = True
         threading.Thread(target=self._reader, daemon=True).start()
         self.create_timer(5.0, self._report)
-        self.get_logger().info(f'LD19 node up, reading {self.port} at {self.baud}')
+        self.get_logger().info(f'D500 node up, reading {self.port} at {self.baud}')
 
     # -- serial ------------------------------------------------------------
     def _reader(self):
@@ -214,7 +217,7 @@ class LD19Node(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = LD19Node()
+    node = D500Node()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

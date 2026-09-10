@@ -65,6 +65,51 @@ SOI = b"\xff\xd8\xff"
 EOI = b"\xff\xd9"
 
 
+
+# ---------------------------------------------------------------------------
+# Resolve the rover to an IP, once, and hand the frontend an IP-based URL.
+#
+# WHY NOT JUST GIVE THE BROWSER "fpms1.local":
+# Chrome uses its own async DNS resolver, which on Linux does NOT go through
+# nsswitch - so an mDNS name that resolves perfectly from the shell can fail
+# inside the page, and every ROS-fed value (scan, battery, attitude, thermal)
+# goes dark at once with no error the operator can see. Resolving here, in
+# Python, uses the system resolver where mDNS does work.
+# It also removes an mDNS lookup from every poll; that was costing ~550 ms.
+# ---------------------------------------------------------------------------
+_RESOLVED = {"ip": None, "at": 0.0}
+_RESOLVE_TTL = 300.0
+_RESOLVING = {"busy": False}
+
+
+def _resolve_bg():
+    """Refresh the cached IP off the panel thread."""
+    try:
+        import socket
+        ip = socket.getaddrinfo(ROVER_HOST, None, socket.AF_INET)[0][4][0]
+        _RESOLVED["ip"], _RESOLVED["at"] = ip, time.time()
+    except Exception:                                    # noqa: BLE001
+        pass
+    finally:
+        _RESOLVING["busy"] = False
+
+
+def rover_ip(default=ROVER_HOST):
+    """Current IP for the rover. NEVER BLOCKS.
+
+    state() cost drives how often the registry runs a panel, so a blocking
+    getaddrinfo here is self-defeating: the mDNS lookup measured ~47 ms, which
+    pushed the refresh interval out to 76 SECONDS. So a stale cache is
+    refreshed on a background thread and the old value is returned meanwhile.
+    """
+    now = time.time()
+    if _RESOLVED["ip"] and (now - _RESOLVED["at"]) < _RESOLVE_TTL:
+        return _RESOLVED["ip"]
+    if not _RESOLVING["busy"]:
+        _RESOLVING["busy"] = True
+        threading.Thread(target=_resolve_bg, daemon=True).start()
+    return _RESOLVED["ip"] or default
+
 class _Capture:
     """Holds one ffmpeg, hands out the most recent JPEG."""
 
@@ -263,7 +308,8 @@ def state() -> dict:
             "size": [160, 120],
             # Live as of 2026-09-10 via thermal_node over rosbridge.
             "usable": True,
-            "rosbridge": ROSBRIDGE_WS,
+            "ip": rover_ip(),
+            "rosbridge": "ws://%s:9090" % rover_ip(),
             "image_topic": THERMAL_IMAGE_TOPIC,
             "image_type": THERMAL_IMAGE_TYPE,
             "stats_topic": THERMAL_STATS_TOPIC,
