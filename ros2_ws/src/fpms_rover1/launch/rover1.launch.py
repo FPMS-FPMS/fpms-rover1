@@ -2,6 +2,7 @@
 
   ld19_node          the D500 scanner, as sensor_msgs/LaserScan on /scan
   thermal_node       the Thermal Master P1, as Image + temperature + stats
+  yahboom_node       the STM32 board: IMU, attitude, battery, encoders. READ ONLY.
   rosbridge_server   ws://<rover>:9090, which the FPMS Cortex panels connect
                      to directly from the browser
 
@@ -57,6 +58,21 @@ def generate_launch_description():
         }],
     )
 
+    # READ ONLY: no /cmd_vel subscriber and no motor write path exist in this
+    # node. Rover 1's set_motor sign convention is unverified and gets tested
+    # with the wheels off the ground, not inferred over SSH.
+    yahboom = Node(
+        package='fpms_rover1',
+        executable='yahboom_node',
+        name='yahboom_node',
+        output='screen',
+        parameters=[{
+            'port': '/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0',
+            'frame_id': 'imu_link',
+            'enable_auto_report': True,
+        }],
+    )
+
     # 0.0.0.0 so the ground station can reach it over FPMS_Net. This is a
     # private WPA2 AP; do not expose this on a venue network.
     rosbridge = Node(
@@ -67,4 +83,4 @@ def generate_launch_description():
         parameters=[{'port': 9090, 'address': '0.0.0.0'}],
     )
 
-    return LaunchDescription([port, frame_id, ld19, thermal, rosbridge])
+    return LaunchDescription([port, frame_id, ld19, thermal, yahboom, rosbridge])

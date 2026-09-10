@@ -187,3 +187,51 @@ absolute values are on `/thermal/temperature`.
 
 The scanner is a **D500**. It speaks the LDROBOT LD19 protocol, which is why
 the LD19 frame decoder works against it unchanged.
+
+## STM32 Yahboom ROS Board V3.0 (2026-09-10) — READ ONLY
+
+    /imu/data_raw      sensor_msgs/Imu          gyro + accel
+    /imu/mag           sensor_msgs/MagneticField uncalibrated
+    /rover/attitude    roll, pitch, yaw (rad) computed on the board
+    /rover/battery     sensor_msgs/BatteryState
+    /rover/encoders    4 x int32 cumulative counts
+    /rover/velocity    the board's own vx, vy, wz
+
+**This node cannot move the rover.** There is no `/cmd_vel` subscriber and no
+motor write path — verified by AST, not by eye: exactly one `ser.write()`
+(the telemetry-enable) and zero `create_subscription()`. Rover 2's code records
+that `set_motor` **negative** drives **forward**; whether Rover 1 shares that
+sign is unverified, and it gets tested with the wheels off the ground.
+
+### Rosmaster_Lib is deliberately NOT used
+
+It is not on PyPI — it ships as a vendor zip. Two independent GitHub mirrors
+were compared and **differ by ~4000 lines** (107 KB vs 59 KB), so neither can
+be trusted as authentic vendor code, and that library contains the motor write
+path. Only the *receive* half of the protocol is reimplemented here, from the
+wire format both mirrors agree on:
+
+    0xFF 0xFB <len> <type> <data...> <checksum>
+    checksum = (len + type + sum(data[:-1])) & 0xFF,  115200 8N1
+
+### Two things the datasheet got wrong
+
+**The IMU is an ICM20948, not the MPU9250 the vendor advertises.** The board
+emits function `0x0E` with an 18-byte payload and never `0x0B`. Verified by
+sniffing the live board.
+
+**The accelerometer uses no datasheet full-scale.** Measured against gravity
+with the rover stationary (median of 150 samples, |accel| must be 1 g):
+
+    raw |accel| = 10245 counts
+      +-2g  (16384 LSB/g) -> 0.625 g    +-8g  (4096) -> 2.501 g
+      +-4g  ( 8192 LSB/g) -> 1.251 g    +-16g (2048) -> 5.002 g
+
+None fit. **10240 counts/g** (1024 x 10) lands within 0.05% and is taken as the
+board's fixed-point constant. After the fix, |accel| reads 9.839 m/s^2 against
+a true 9.807 — **0.33% error**.
+
+**Gyro and mag scales remain PROVISIONAL.** They cannot be derived at rest,
+where the only honest reading is the ~6-count bias. Verifying the gyro needs a
+known rotation. Since the accel proved not to follow the datasheet, do not
+assume the gyro does.
