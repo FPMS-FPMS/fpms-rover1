@@ -30,6 +30,8 @@ Bins with no return are published as +inf, which is the ROS convention for
 
 from __future__ import annotations
 
+import os
+import time
 import math
 import struct
 import threading
@@ -108,18 +110,35 @@ class D500Node(Node):
     # -- serial ------------------------------------------------------------
     def _reader(self):
         import serial
+        backoff = 1.0
         while self.running and rclpy.ok():
+            # Wait for the device NODE to exist before trying to open it.
+            # Reopening a path that is not there just raises once a second and
+            # buries the real reason in log noise.
+            if not os.path.exists(self.port):
+                self.get_logger().warn(f'{self.port} not present - waiting for it')
+                while self.running and rclpy.ok() and not os.path.exists(self.port):
+                    time.sleep(1.0)
+                if not (self.running and rclpy.ok()):
+                    return
+                self.get_logger().info('device reappeared')
             try:
                 with serial.Serial(self.port, self.baud, timeout=1) as ser:
-                    self.get_logger().info('scanner opened')
+                    self.get_logger().info('%s opened' % self.port.split('/')[-1])
+                    backoff = 1.0
                     self._pump(ser)
+                # _pump returning is not an error - the device went quiet. But
+                # reopening instantly would cycle the port open/closed as fast
+                # as the CPU allows, which looks exactly like a hardware fault.
+                time.sleep(1.0)
             except Exception as exc:                      # noqa: BLE001
-                self.get_logger().warn(f'scanner: {type(exc).__name__}: {exc}')
-                for _ in range(20):
-                    if not (self.running and rclpy.ok()):
-                        return
-                    rclpy.spin_once(self, timeout_sec=0.1)
-
+                self.get_logger().warn(f'{type(exc).__name__}: {exc}')
+                # NEVER rclpy.spin_once() here. rclpy.spin() owns this node on
+                # the MAIN thread; a second spin on the same node from a worker
+                # is undefined and can raise - killing the only reconnect path
+                # there is, so a transient unplug becomes permanent.
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 10.0)
     def _pump(self, ser):
         buf = bytearray()
         while self.running and rclpy.ok():
