@@ -100,6 +100,9 @@ export function mount(root, api = {}) {
   let stTopic = '/scan', stType = 'sensor_msgs/msg/LaserScan';
   let rosAt = 0;
   let source = 'connecting';
+  let rosTimes = [];          // arrival stamps, for a windowed rate
+  let rosEverUp = false;
+  const mountedAt = Date.now();
   let last = null;          // last good scan payload
   let lastErr = null;
   let timer = null;
@@ -214,10 +217,19 @@ export function mount(root, api = {}) {
       unsub = subscribe(ROSLIB, ros, stTopic, stType, (m) => {
         if (dead) return;
         const pts = fromLaserScan(m);
-        rosAt = Date.now();
+        const now = Date.now();
+        rosAt = now;
+        rosEverUp = true;
         source = 'ROS';
+        // Rate measured over a 3 s window, not since connect: a stall has to
+        // show as the rate FALLING, not be hidden inside a long average.
+        rosTimes.push(now);
+        while (rosTimes.length && now - rosTimes[0] > 3000) rosTimes.shift();
+        const hz = rosTimes.length > 1
+          ? (rosTimes.length - 1) / ((now - rosTimes[0]) / 1000) : 0;
+        // One revolution per scan, so rpm follows directly from the scan rate.
         last = { ok: true, points: pts, count: pts.length,
-                 hz: (last && last.hz) || 0, rpm: (last && last.rpm) || 0,
+                 hz: hz, rpm: hz * 60,
                  frames: null, crc_reject: null, age_s: 0 };
         lastErr = null;
         paintSide(); draw();
@@ -229,9 +241,13 @@ export function mount(root, api = {}) {
 
   // ---- fetching (HTTP fallback) ----------------------------------------
   async function tick() {
-    // ROS is live, so do not also hammer the HTTP bridge - and on the rover
-    // the HTTP bridge is stopped whenever the ROS stack owns the scanner.
+    // Never poll HTTP while ROS is alive. Also stay quiet during the first
+    // few seconds after mount: the rover's bridge runs in health-only mode
+    // whenever ROS owns the scanner, so an early fetch just logs a 503 for a
+    // fallback that is not needed.
     if (dead || !scanUrl || rosFresh()) return;
+    if (rosEverUp) return;                       // ROS has worked; wait for it
+    if (Date.now() - mountedAt < 8000) return;   // give ROS time to connect
     try {
       const ac = new AbortController();
       inflight = ac;
@@ -272,8 +288,11 @@ export function mount(root, api = {}) {
       ['points', ok ? fmt(s.count) : DASH],
       ['rate', ok ? fmt(s.hz, ' Hz', 2) : DASH],
       ['rpm', ok ? fmt(s.rpm, '', 0) : DASH],
-      ['frames', ok ? fmt(s.frames) : DASH],
-      ['CRC rejects', ok ? fmt(s.crc_reject) : DASH],
+      // These two counters come from the HTTP bridge's own decoder. On the
+      // ROS path the equivalent is in the node's log, not in the message.
+      ['frames', s && s.frames != null ? fmt(s.frames) : (rosFresh() ? 'n/a on ROS' : DASH)],
+      ['CRC rejects', s && s.crc_reject != null ? fmt(s.crc_reject)
+        : (rosFresh() ? 'n/a on ROS' : DASH)],
       ['scan age', ok ? fmt(s.age_s, ' s', 2) : DASH],
     ];
     for (const [k, v] of rows) {
