@@ -75,9 +75,9 @@ const PANELS = [
   { id: 'cameras',      label: 'Cameras',     glyph: '▣', mod: './panel_cameras.js',   needs: 'cameras' },
   { id: 'rover',        label: 'Rover',       glyph: '⬢', mod: './panel_rover.js',     needs: 'rover' },
   { id: 'mission',      label: 'Mission',     glyph: '▶', mod: './panel_mission.js',   needs: 'mission' },
-  /* 3D field: the RViz-style world view. Dirty-driven, not an animation
-   * loop - see the header of panel_field.js. */
-  { id: 'field',        label: '3D Field',    glyph: '⬔', mod: './panel_field.js',     needs: 'field' },
+  /* 3D Field removed 2026-09-10 at the operator's request. The panel and
+   * its backend are LEFT IN PLACE - only the registry entry is gone, so
+   * restoring it is one line rather than a recovery. */
   { id: 'accel',        label: 'Accel',       glyph: '⧗', mod: './panel_accel.js',      needs: 'accel' },
   /* CPU/power put BACK 2026-09-04: the trim above dropped it, but this is the
    * panel that shows package power, per-core clocks, governor, EPP and the

@@ -561,3 +561,20 @@ towards, the view now renders low-y at the bottom — start near, goal ahead.
 Unlike the M1/M2 midpoint, the lake at (500, 157.5) is **inside** the driveable
 arena, so it is a goal the rover can actually reach rather than one it can only
 stand off from.
+
+## Verifying a panel actually works
+
+`node --check` uses the **CommonJS** parse goal and accepts things an ES module
+rejects. The `SourceTextModule` check fixes that — but **neither catches an
+undefined variable**, because that is a runtime `ReferenceError`, not a syntax
+error. A panel referencing a variable that no longer exists parses perfectly
+and then renders `LiDAR could not load`.
+
+So the real check is loading each tab in a browser and looking at the DOM:
+
+    python3 cdp_tabcheck.py     # per-tab, fresh page each, greps for the error card
+
+Each tab must be checked in its **own fresh page**. Navigating by hash does not
+reload the page, so a panel read straight after a hash change can be caught
+mid-mount and read as broken when it is fine — that artifact cost a debug cycle
+earlier.

@@ -760,13 +760,16 @@ export function mount(root, api = {}) {
     if (!info.dataset.filled && st.lidar) {
       info.dataset.filled = '1';
       info.replaceChildren(h('div', { class: 'small', text:
-        `${st.lidar.model} on the ${st.lidar.port}. M1 and M2 are the mission `
-        + `stack's own constants, carried through verbatim. `
-        + (unmeasured.length ? `${unmeasured.join(' and ')} are PLACEHOLDERS, drawn dashed with a "?" - `
-          + `give me the real coordinates and they are a one-line change. ` : '')
-        + `Rover 1 has no localisation, so the scan is drawn from an assumed `
-        + `pose at HOME facing ${st.arena ? st.arena.home.heading_deg : 90}°; `
-        + `it is NOT a tracked position.` }));
+        `${st.lidar.model} on the ${st.lidar.port}, scans fetched straight from `
+        + `the rover over rosbridge. M1, M2 and M3 are fixed: M1 and M2 are the `
+        + `mission stack's own constants carried through verbatim, M3 is 300 mm `
+        + `left of M1. The lake is NOT stored - it is derived as the midpoint of `
+        + `the two rovers, so it appears only once both positions are known. `
+        + `Obstacles are detected from the scan, not configured, because they `
+        + `move between runs. The route is grid A* replanned twice a second; `
+        + `an orange dashed leg is a standoff the rover cannot drive, and a red `
+        + `dashed one means the route had to start away from the rover because `
+        + `it is inside inflation.` }));
     }
   }
 
