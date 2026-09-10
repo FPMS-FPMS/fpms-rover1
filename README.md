@@ -274,3 +274,25 @@ that is 800 KB/s through rosbridge. The PNG is ~12 KB.
   160x120 sensor never measured
 - ironbow rather than a rainbow map — a rainbow invents edges that are not in
   the data
+
+## Installing the panels permanently
+
+    sudo bash ~/fpms-dev/cortex-rover/install-rover1-panels.sh
+    sudo fpms-integrity baseline
+
+After that plain `cortex` opens the Cortex with the three tabs; the shim at
+`~/.local/bin/cortex` is removed by the installer.
+
+The installer **verifies everything before writing anything** — a half
+installed Cortex that will not start is worse than one without the new tabs:
+
+- every backend file must `ast.parse`
+- every web file must parse **as an ES module**, not as a script. `node --check`
+  uses the CommonJS goal and misses duplicate-declaration errors in modules;
+  that exact gap shipped a broken panel here once already.
+- `app.js` is the only pre-existing file replaced, and the install is **refused**
+  if the installed copy contains any line the new one drops — i.e. if someone
+  else edited it. Its real diff is 12 added lines, 0 removed.
+
+It backs up the whole tree to `/usr/local/lib/fpms/cortex-backup-<stamp>` first,
+verifies the result afterwards, and supports `--uninstall`.
