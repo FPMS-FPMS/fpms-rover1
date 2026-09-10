@@ -4,6 +4,7 @@
                      lidar_driver:=builtin swaps in our d500_node instead
   thermal_node       the Thermal Master P1, as Image + temperature + stats
   yahboom_node       the STM32 board: IMU, attitude, battery, encoders. READ ONLY.
+  odom_node          dead reckoning -> /odom, /rover/arena_pose, map->odom->base_link
   rosbridge_server   ws://<rover>:9090, which the FPMS Cortex panels connect
                      to directly from the browser
 
@@ -56,6 +57,16 @@ def generate_launch_description():
     laser_y = DeclareLaunchArgument(
         'laser_y', default_value='0.0',
         description='drive-axle centre to scanner, +left, metres')
+    start_x = DeclareLaunchArgument(
+        'start_x_mm', default_value='842.5',
+        description='where the rover was PLACED, arena mm')
+    start_y = DeclareLaunchArgument(
+        'start_y_mm', default_value='157.5',
+        description='where the rover was PLACED, arena mm')
+    start_yaw = DeclareLaunchArgument(
+        'start_yaw_deg', default_value='90.0',
+        description='which way it was FACING when placed, degrees')
+
     laser_yaw = DeclareLaunchArgument(
         'laser_yaw', default_value='0.0',
         description='scanner yaw vs the chassis, radians (0 = zero-degree ray points forward)')
@@ -154,6 +165,20 @@ def generate_launch_description():
         }],
     )
 
+    # Dead reckoning from the board's own velocity + fused yaw. start_* is
+    # where the rover was PLACED in arena mm - nothing can derive that.
+    odom = Node(
+        package='fpms_rover1',
+        executable='odom_node',
+        name='odom_node',
+        output='screen',
+        parameters=[{
+            'start_x_mm': LaunchConfiguration('start_x_mm'),
+            'start_y_mm': LaunchConfiguration('start_y_mm'),
+            'start_yaw_deg': LaunchConfiguration('start_yaw_deg'),
+        }],
+    )
+
     # 0.0.0.0 so the ground station can reach it over FPMS_Net. This is a
     # private WPA2 AP; do not expose this on a venue network.
     rosbridge = Node(
@@ -166,5 +191,6 @@ def generate_launch_description():
 
     return LaunchDescription([port, frame_id, driver,
                               laser_z, laser_x, laser_y, laser_yaw,
-                              d500_vendor, d500_tf,
+                              start_x, start_y, start_yaw,
+                              d500_vendor, d500_tf, odom,
                               d500, thermal, yahboom, rosbridge])

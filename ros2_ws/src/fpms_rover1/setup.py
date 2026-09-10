@@ -22,6 +22,7 @@ setup(
             'd500_node = fpms_rover1.d500_node:main',
             'thermal_node = fpms_rover1.thermal_node:main',
             'yahboom_node = fpms_rover1.yahboom_node:main',
+            'odom_node = fpms_rover1.odom_node:main',
         ],
     },
 )

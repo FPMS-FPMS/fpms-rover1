@@ -431,3 +431,37 @@ listed with its centre, extent and point count.
 arena coordinate is only as good as the guess that the rover is at HOME. Real
 obstacle coordinates need odometry — the Yahboom board already publishes
 encoders and IMU, so that is buildable.
+
+## Odometry — the map stays still, the rover moves
+
+    /odom               nav_msgs/Odometry
+    /rover/arena_pose   PoseStamped, arena MILLIMETRES, for the dashboard
+    map -> odom         static, from where the rover was PLACED
+    odom -> base_link   the integrated motion
+    /reset_odom         std_srvs/Empty
+
+**It integrates the board's velocity, not wheel ticks.** Encoder odometry needs
+ticks-per-rev, wheel diameter and track width — *none* measured on Rover 1, and
+a guessed constant produces a pose that is confidently wrong, which looks like
+drift rather than like a bad number. The Yahboom board already reports its own
+vx/vy/wz from its internal kinematics, so no chassis constants are needed.
+
+**Yaw is read, not accumulated.** The board publishes a fused 9-axis attitude.
+Integrating an angular rate accumulates error without bound; a fused yaw does
+not. Only x and y are integrated.
+
+Measured: **zero drift while stationary** — `x=+0.000 y=+0.000 travelled=0.00m`
+— because the board reads a clean 0.0 at rest. `/odom` and `/rover/arena_pose`
+both at 20 Hz.
+
+⚠️ This is dead reckoning. It drifts, there is no loop closure, and nothing
+corrects it against the LiDAR. The published covariances say so (0.25 on x/y,
+0.02 on yaw) rather than claiming precision. It answers "how far has it moved
+since it started", not "where is it an hour later".
+
+`start_x_mm` / `start_y_mm` / `start_yaw_deg` are where the rover was **placed**.
+Nothing can derive that — it is a human putting a robot down.
+
+The LiDAR panel now draws from the live pose and states which pose is in force:
+`pose LIVE (odometry)` or `pose ASSUMED = HOME`. Obstacle positions follow the
+live pose too, so they stay put on the map as the rover moves past them.

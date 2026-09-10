@@ -83,8 +83,13 @@ export function mount(root, api = {}) {
   // Hoisted: subscription callbacks can fire before mount() returns.
   let dead = false;
   let scanUrl = null;
-  let rosUrl = null, rosWired = false, unsub = null, onStatus = null;
+  let rosUrl = null, rosWired = false, unsub = null, unsubPose = null, onStatus = null;
   let stTopic = '/scan', stType = 'sensor_msgs/msg/LaserScan';
+  let poseTopic = '/rover/arena_pose', poseType = 'geometry_msgs/msg/PoseStamped';
+  // LIVE pose in arena mm from odom_node. null until it arrives, and the panel
+  // says which it is using - a map drawn from an assumed pose that is silently
+  // wrong is worse than one that admits it does not know.
+  let pose = null, poseAt = 0;
   let rosAt = 0, source = 'connecting';
   let rosTimes = [], rosEverUp = false, wasFresh = false;
   const mountedAt = Date.now();
@@ -165,6 +170,21 @@ export function mount(root, api = {}) {
 
   // ---- ROS -------------------------------------------------------------
   const rosFresh = () => (Date.now() - rosAt) < 2000;
+  const poseFresh = () => pose && (Date.now() - poseAt) < 2000;
+
+  /* The pose the drawing uses: live odometry when it is arriving, otherwise
+   * the placement at HOME. Which one is in force is shown on the canvas. */
+  function currentPose() {
+    if (poseFresh()) return pose;
+    if (!arena) return { x: 0, y: 0, hdg: 90, live: false };
+    return { x: arena.home.x, y: arena.home.y, hdg: arena.home.heading_deg, live: false };
+  }
+
+  function quatYawDeg(q) {
+    if (!q) return 0;
+    // Planar: yaw straight out of the z/w terms.
+    return Math.atan2(2 * (q.w * q.z), 1 - 2 * (q.z * q.z)) * 180 / Math.PI;
+  }
 
   function fromLaserScan(m) {
     const out = [];
@@ -187,6 +207,12 @@ export function mount(root, api = {}) {
     try {
       const { ROSLIB, ros } = await connect(url, onStatus);
       if (dead) { release(url, onStatus); return; }
+      unsubPose = subscribe(ROSLIB, ros, poseTopic, poseType, (m) => {
+        if (dead || !m.pose) return;
+        pose = { x: m.pose.position.x, y: m.pose.position.y,
+                 hdg: quatYawDeg(m.pose.orientation), live: true };
+        poseAt = Date.now();
+      });
       unsub = subscribe(ROSLIB, ros, stTopic, stType, (m) => {
         if (dead) return;
         const pts = fromLaserScan(m);
@@ -199,9 +225,7 @@ export function mount(root, api = {}) {
         last = { ok: true, points: pts, count: pts.length, hz, rpm: hz * 60,
                  rays: (m.ranges || []).length, frames: null, crc_reject: null, age_s: 0 };
         lastErr = null;
-        obstacles = detectObstacles(pts, { x: arena ? arena.home.x : 0,
-                                           y: arena ? arena.home.y : 0,
-                                           hdg: arena ? arena.home.heading_deg : 90 });
+        obstacles = detectObstacles(pts, currentPose());
         paintSide(); paintObstacles(); draw();
       });
     } catch (e) {
@@ -339,7 +363,7 @@ export function mount(root, api = {}) {
 
     // ---- the scan, from an ASSUMED pose ---------------------------------
     const home = arena.home;
-    const pose = { x: home.x, y: home.y, hdg: home.heading_deg };
+    const p = currentPose();
     if (showScan && last && last.points && last.points.length) {
       const stale = rosEverUp && !rosFresh();
       ctx.globalAlpha = stale ? 0.18 : 0.85;
@@ -348,9 +372,9 @@ export function mount(root, api = {}) {
       for (const [angDeg, distMm, inten] of last.points) {
         if (!distMm || distMm > maxRange) continue;
         // scan angle is CCW from the rover's forward axis; add the heading.
-        const a = (pose.hdg + angDeg) * Math.PI / 180;
-        const px = pose.x + Math.cos(a) * distMm;
-        const py = pose.y + Math.sin(a) * distMm;
+        const a = (p.hdg + angDeg) * Math.PI / 180;
+        const px = p.x + Math.cos(a) * distMm;
+        const py = p.y + Math.sin(a) * distMm;
         ctx.globalAlpha = (stale ? 0.18 : 0.35 + 0.6 * Math.min(1, (inten || 0) / 200));
         ctx.beginPath(); ctx.arc(X(px), Y(py), dot, 0, Math.PI * 2); ctx.fill();
       }
@@ -359,20 +383,28 @@ export function mount(root, api = {}) {
 
     // ---- rover at the assumed pose --------------------------------------
     if (body) {
-      const a = pose.hdg * Math.PI / 180;
+      const a = p.hdg * Math.PI / 180;
       const ca = Math.cos(a), sa = Math.sin(a);
       const corners = [[body.front, body.left], [body.front, body.right],
                        [body.back, body.right], [body.back, body.left]];
       ctx.strokeStyle = accent2; ctx.lineWidth = Math.max(1.4, W / 620);
       ctx.beginPath();
       corners.forEach(([fx, fy], i) => {
-        const px = pose.x + fx * ca - fy * sa, py = pose.y + fx * sa + fy * ca;
+        const px = p.x + fx * ca - fy * sa, py = p.y + fx * sa + fy * ca;
         i ? ctx.lineTo(X(px), Y(py)) : ctx.moveTo(X(px), Y(py));
       });
       ctx.closePath(); ctx.stroke();
     }
     ctx.fillStyle = accent2;
-    ctx.beginPath(); ctx.arc(X(pose.x), Y(pose.y), Math.max(3, W / 260), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), Math.max(3, W / 260), 0, Math.PI * 2); ctx.fill();
+    // heading tick, so which way it faces is unambiguous
+    {
+      const a2 = p.hdg * Math.PI / 180, L = Math.max(10, W / 34);
+      ctx.strokeStyle = accent2; ctx.lineWidth = Math.max(1.6, W / 520);
+      ctx.beginPath(); ctx.moveTo(X(p.x), Y(p.y));
+      ctx.lineTo(X(p.x + Math.cos(a2) * L / s), Y(p.y + Math.sin(a2) * L / s));
+      ctx.stroke();
+    }
 
     // ---- detected obstacles ---------------------------------------------
     if (showObs && obstacles.length) {
@@ -481,6 +513,9 @@ export function mount(root, api = {}) {
       ['rate', okk ? fmt(s.hz, ' Hz', 2) : DASH],
       ['rpm', okk ? fmt(s.rpm, '', 0) : DASH],
       ['obstacles', showObs ? String(obstacles.length) : 'hidden'],
+      ['pose', poseFresh() ? 'live (odometry)' : 'assumed (HOME)'],
+      ['position', poseFresh() ? `${pose.x.toFixed(0)}, ${pose.y.toFixed(0)} mm` : DASH],
+      ['heading', poseFresh() ? `${pose.hdg.toFixed(0)}°` : DASH],
     ]) kvEl.append(h('dt', { text: k }), h('dd', { text: v }));
   }
 
@@ -516,15 +551,18 @@ export function mount(root, api = {}) {
     if (st.scan_url && st.scan_url !== scanUrl) { scanUrl = st.scan_url; tick(); }
     if (st.scan_topic) stTopic = st.scan_topic;
     if (st.scan_type) stType = st.scan_type;
+    if (st.pose_topic) poseTopic = st.pose_topic;
+    if (st.pose_type) poseType = st.pose_type;
     if (st.arena && !arena) { arena = st.arena; draw(); }
     if (st.markers && !markers.length) { markers = st.markers; paintMarkers(); draw(); }
     if (st.body_mm && !body) { body = st.body_mm; draw(); }
     if (!rosWired && st.rosbridge) { rosWired = true; wireRos(st.rosbridge); }
 
-    const unmeasured = markers.filter((m) => !m.measured).map((m) => m.id);
-    warnBox.textContent = unmeasured.length
-      ? `pose ASSUMED = HOME (no localisation)\n${unmeasured.join(', ')} not measured`
-      : 'pose ASSUMED = HOME (no localisation)';
+    const cp = currentPose();
+    warnBox.textContent = cp.live
+      ? `pose LIVE (odometry)  ${cp.x.toFixed(0)}, ${cp.y.toFixed(0)} mm  ${cp.hdg.toFixed(0)}°`
+      : 'pose ASSUMED = HOME (odometry not arriving)';
+    warnBox.style.color = cp.live ? '' : 'var(--warn)';
     warnBox.style.whiteSpace = 'pre';
 
     if (!info.dataset.filled && st.lidar) {
@@ -561,6 +599,7 @@ export function mount(root, api = {}) {
       try { if (inflight) inflight.abort(); } catch (e) { /* settled */ }
       inflight = null;
       if (unsub) { unsub(); unsub = null; }
+      if (unsubPose) { unsubPose(); unsubPose = null; }
       if (rosUrl) { release(rosUrl, onStatus); rosUrl = null; }
     },
   };

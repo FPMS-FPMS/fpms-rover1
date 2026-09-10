@@ -33,6 +33,11 @@ BRIDGE = "http://%s:8781" % ROVER_HOST
 ROSBRIDGE_WS = "ws://%s:9090" % ROVER_HOST
 SCAN_TOPIC = "/scan"
 SCAN_TYPE = "sensor_msgs/msg/LaserScan"
+# Live pose in ARENA MILLIMETRES from odom_node. The map is fixed; the rover
+# moves on it. Before this existed the panel drew everything from an assumed
+# pose at HOME, which was only true until the rover moved.
+POSE_TOPIC = "/rover/arena_pose"
+POSE_TYPE = "geometry_msgs/msg/PoseStamped"
 
 # The scanner's own geometry and limits, so the plot is drawn to scale rather
 # than normalised to whatever the largest return happened to be.
@@ -151,6 +156,8 @@ def state() -> dict:
         "rosbridge": "ws://%s:9090" % ip,
         "scan_topic": SCAN_TOPIC,
         "scan_type": SCAN_TYPE,
+        "pose_topic": POSE_TOPIC,
+        "pose_type": POSE_TYPE,
         "scan_url": "http://%s:8781/scan" % ip,
         "health_url": "http://%s:8781/health" % ip,
         "lidar": LIDAR,
