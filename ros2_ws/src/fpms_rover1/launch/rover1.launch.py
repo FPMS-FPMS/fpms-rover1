@@ -1,6 +1,7 @@
 """rover1.launch.py - everything Rover 1 publishes, plus the bridge the UI uses.
 
-  ld19_node          the scanner, as sensor_msgs/LaserScan on /scan
+  ld19_node          the D500 scanner, as sensor_msgs/LaserScan on /scan
+  thermal_node       the Thermal Master P1, as Image + temperature + stats
   rosbridge_server   ws://<rover>:9090, which the FPMS Cortex panels connect
                      to directly from the browser
 
@@ -43,6 +44,19 @@ def generate_launch_description():
         }],
     )
 
+    thermal = Node(
+        package='fpms_rover1',
+        executable='thermal_node',
+        name='thermal_node',
+        output='screen',
+        parameters=[{
+            'model': 'p1',
+            'frame_id': 'thermal',
+            'publish_compressed': True,
+            'max_fps': 9.0,
+        }],
+    )
+
     # 0.0.0.0 so the ground station can reach it over FPMS_Net. This is a
     # private WPA2 AP; do not expose this on a venue network.
     rosbridge = Node(
@@ -53,4 +67,4 @@ def generate_launch_description():
         parameters=[{'port': 9090, 'address': '0.0.0.0'}],
     )
 
-    return LaunchDescription([port, frame_id, ld19, rosbridge])
+    return LaunchDescription([port, frame_id, ld19, thermal, rosbridge])

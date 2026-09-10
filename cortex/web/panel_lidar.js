@@ -1,4 +1,4 @@
-/* panel_lidar - LIDAR panel for Rover 1 (LDROBOT LD19 / D500).
+/* panel_lidar - LIDAR panel for Rover 1 (LDROBOT D500 (LD19 protocol)).
  *
  * The scan is fetched STRAIGHT FROM THE ROVER, not through the Cortex backend.
  * A 360-point scan is ~6 KB and the scanner turns at 10 Hz; pushing that

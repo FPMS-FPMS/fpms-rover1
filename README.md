@@ -147,3 +147,43 @@ which would read as an obstacle at the origin. Clockwise sweep is corrected by
 remapping the array, keeping `angle_increment` positive, because a negative
 increment with `angle_min > angle_max` is legal but several consumers
 mishandle it.
+
+## Thermal camera on ROS (2026-09-10)
+
+The Thermal Master P1 is **live**. It has no kernel driver and no V4L2 node -
+a userspace libusb driver reads it and `thermal_node` publishes it.
+
+    /thermal/image             mono8  IR brightness. What a human reads.
+    /thermal/temperature       32FC1  degrees Celsius PER PIXEL. The measurement.
+    /thermal/image/compressed  png    ironbow, for the browser
+    /thermal/stats                    min, max, mean, centre in Celsius
+
+The mono8 image is an AGC'd rendering; **its grey levels do not map linearly
+to temperature.** Anything that needs absolute values must read
+`/thermal/temperature`, not the picture.
+
+Setup on the rover (the driver is not vendored - point `driver_path` at a clone):
+
+    git clone https://github.com/jvdillon/p3-ir-camera ~/drivers/p3-ir-camera
+    sudo apt-get install -y python3-usb libusb-1.0-0
+    echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="3474", ATTR{idProduct}=="45c2", MODE="0666"' \
+      | sudo tee /etc/udev/rules.d/99-thermal-master-p1.rules
+    sudo udevadm control --reload-rules && sudo udevadm trigger
+
+Without that udev rule the device is root-only and the node cannot open it.
+
+### Measured
+
+Camera reports `model P1, serial P1016021DG051600119, fw 00.00.00.04`.
+160x120 at 9.0 fps from the driver, published at ~8.3 Hz on all four topics.
+Verified over rosbridge from the ground station: a valid 160x120 PNG
+(12,250 B) plus `min 19.2 / max 31.9 / mean 21.3 / centre 20.8 C`.
+
+The colormap is scaled to **each frame's own** min/max. A fixed span would
+render a 24-25 C room as uniform black. That is a display choice only; the
+absolute values are on `/thermal/temperature`.
+
+## Naming
+
+The scanner is a **D500**. It speaks the LDROBOT LD19 protocol, which is why
+the LD19 frame decoder works against it unchanged.

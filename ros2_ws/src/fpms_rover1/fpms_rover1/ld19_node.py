@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ld19_node - publishes the LDROBOT LD19 / D500 scanner as sensor_msgs/LaserScan.
+"""ld19_node - publishes the LDROBOT D500 (LD19 protocol) scanner as sensor_msgs/LaserScan.
 
 THE FRAME FORMAT HERE IS CONFIRMED, NOT ASSUMED
 ------------------------------------------------

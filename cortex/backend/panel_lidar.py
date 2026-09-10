@@ -17,7 +17,7 @@ protocol the page can consume, and a proxy hop would add latency and a copy
 for no gain. This panel's whole job is to hand the frontend the URL, so the
 address lives in exactly one place.
 
-The scanner is an LDROBOT LD19/D500 on the CP2102 bridge. Frame format was
+The scanner is an LDROBOT D500 on the CP2102 bridge. Frame format was
 confirmed against live hardware on 2026-09-10 by CRC: 419 frames, 0 rejects.
 """
 
@@ -34,7 +34,7 @@ SCAN_TYPE = "sensor_msgs/msg/LaserScan"
 # The scanner's own geometry and limits, so the plot is drawn to scale rather
 # than normalised to whatever the largest return happened to be.
 LIDAR = {
-    "model": "LDROBOT LD19 / D500",
+    "model": "LDROBOT D500 (LD19 protocol)",
     "port": "CP2102 USB-UART bridge",
     "baud": 230400,
     "range_min_mm": 20,

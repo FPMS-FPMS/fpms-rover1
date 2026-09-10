@@ -65,9 +65,14 @@ export function mount(root, api = {}) {
   root.replaceChildren(h('style', { text: CSS }), el);
 
   // ---- thermal (rover) -------------------------------------------------
-  const thermBadge = h('div', { class: 'badge bad', text: 'no driver' });
+  const thermBadge = h('div', { class: 'badge bad', text: 'connecting' });
   const thermBody = h('div', { class: 'empty' });
-  const thermFeed = h('div', { class: 'feed' }, [thermBody, thermBadge]);
+  const thermImg = h('img', { alt: 'live thermal frame' });
+  thermImg.style.display = 'none';
+  // Nearest-neighbour: 160x120 blown up. Smoothing invents gradients that the
+  // sensor did not measure, which on a thermal image reads as real structure.
+  thermImg.style.imageRendering = 'pixelated';
+  const thermFeed = h('div', { class: 'feed' }, [thermImg, thermBody, thermBadge]);
   const thermKv = h('dl', { class: 'kv' });
   const thermCard = h('div', { class: 'card' }, [
     h('h2', { text: 'Thermal — rover' }), thermFeed, thermKv,
@@ -90,6 +95,11 @@ export function mount(root, api = {}) {
 
   let dead = false;
   let paused = false;
+  // Thermal arrives over rosbridge, not through panel state: a 12 KB PNG in
+  // the SSE snapshot would be broadcast to every client on every tick.
+  let tws = null, twired = false, tretry = null;
+  let tAt = 0, tFrames = 0, tStats = null, tTopics = null;
+  let tObjUrl = null;
   let timer = null;
   let busy = false;
   let frames = 0;
@@ -100,6 +110,69 @@ export function mount(root, api = {}) {
   function kv(dl, pairs) {
     dl.replaceChildren();
     for (const [k, v] of pairs) dl.append(h('dt', { text: k }), h('dd', { text: v }));
+  }
+
+  const tFresh = () => (Date.now() - tAt) < 3000;
+
+  function b64ToBlob(b64, mime) {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new Blob([u8], { type: mime });
+  }
+
+  function connectThermal(url, topics) {
+    if (dead) return;
+    try { tws = new WebSocket(url); } catch (e) { retryThermal(url, topics); return; }
+    tws.onopen = () => {
+      if (dead) return;
+      tws.send(JSON.stringify({ op: 'subscribe', topic: topics.image_topic,
+                                type: topics.image_type }));
+      tws.send(JSON.stringify({ op: 'subscribe', topic: topics.stats_topic,
+                                type: topics.stats_type }));
+    };
+    tws.onmessage = (ev) => {
+      if (dead) return;
+      let m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m || !m.msg) return;
+      if (m.topic === topics.image_topic && m.msg.data) {
+        // Object URLs, not data: URLs - a 12 KB base64 string per frame at
+        // 8 fps churns far more memory as a string than as a Blob.
+        const blob = b64ToBlob(m.msg.data, 'image/' + (m.msg.format || 'png'));
+        const next = URL.createObjectURL(blob);
+        const prev = tObjUrl;
+        tObjUrl = next;
+        thermImg.src = next;
+        thermImg.style.display = '';
+        thermBody.style.display = 'none';
+        if (prev) setTimeout(() => URL.revokeObjectURL(prev), 250);
+        tAt = Date.now(); tFrames++;
+      } else if (m.topic === topics.stats_topic && m.msg.data) {
+        tStats = m.msg.data;
+        tAt = Date.now();
+      }
+      paintThermal();
+    };
+    tws.onclose = () => { if (!dead) retryThermal(url, topics); };
+    tws.onerror = () => { try { tws.close(); } catch (e) { /* closing */ } };
+  }
+
+  function retryThermal(url, topics) {
+    clearTimeout(tretry);
+    tretry = setTimeout(() => { if (!dead) connectThermal(url, topics); }, 3000);
+  }
+
+  function paintThermal() {
+    const live = tFresh();
+    thermBadge.className = 'badge ' + (live ? 'live' : 'bad');
+    if (live && tStats) {
+      thermBadge.textContent = `live  ${tStats[0].toFixed(1)}–${tStats[1].toFixed(1)} °C`;
+    } else if (live) {
+      thermBadge.textContent = 'live';
+    } else {
+      thermBadge.textContent = 'no frames';
+    }
   }
 
   btnPause.addEventListener('click', async () => {
@@ -153,26 +226,36 @@ export function mount(root, api = {}) {
     const st = ((full || {}).panels || {})[PANEL];
     if (!st) return;
 
-    // -- thermal: always an explicit, explained non-feed ------------------
+    // -- thermal ----------------------------------------------------------
     const t = st.thermal || {};
-    thermBody.replaceChildren(
-      h('div', { class: 'hd', text: t.present ? 'present — no driver' : 'not detected' }),
-      h('div', {
-        class: 'bd',
-        text: t.present
-          ? (t.why || 'no kernel driver binds this device')
-          : (t.reachable === false
-            ? ('rover not reachable: ' + (t.error || 'unknown'))
-            : 'the thermal camera is not on the rover’s USB bus'),
-      }),
-    );
-    thermBadge.className = 'badge ' + (t.present ? 'bad' : '');
-    thermBadge.textContent = t.present ? 'no driver' : 'absent';
+    if (!twired && t.usable && t.rosbridge && t.image_topic) {
+      twired = true;
+      tTopics = t;
+      connectThermal(t.rosbridge, t);
+    }
+    if (!tFresh()) {
+      thermImg.style.display = 'none';
+      thermBody.style.display = '';
+      thermBody.replaceChildren(
+        h('div', { class: 'hd', text: t.usable ? 'waiting for frames' : 'unavailable' }),
+        h('div', {
+          class: 'bd',
+          text: t.usable
+            ? ('subscribing to ' + (t.image_topic || '') + ' on ' + (t.rosbridge || ''))
+            : (t.note || 'no driver binds this device'),
+        }),
+      );
+    }
+    paintThermal();
     kv(thermKv, [
-      ['device', 'Thermal Master P1'],
+      ['device', t.device || 'Thermal Master P1'],
       ['where', t.host || DASH],
-      ['on the bus', t.present ? 'yes' : 'no'],
-      ['usable', 'no'],
+      ['size', t.size ? t.size.join(' × ') : DASH],
+      ['transport', t.usable ? 'ROS 2 → rosbridge' : DASH],
+      ['topic', t.image_topic || DASH],
+      ['frames shown', String(tFrames)],
+      ['range now', tStats ? `${tStats[0].toFixed(1)} – ${tStats[1].toFixed(1)} °C` : DASH],
+      ['centre', tStats ? `${tStats[3].toFixed(1)} °C` : DASH],
     ]);
 
     // -- regular ----------------------------------------------------------
@@ -208,6 +291,11 @@ export function mount(root, api = {}) {
     destroy() {
       dead = true;
       clearInterval(timer);
+      clearTimeout(tretry);
+      try { if (tws) tws.close(); } catch (e) { /* already gone */ }
+      tws = null;
+      // Object URLs are not garbage collected on their own.
+      if (tObjUrl) { try { URL.revokeObjectURL(tObjUrl); } catch (e) { /* gone */ } tObjUrl = null; }
       // Release /dev/video0 now. The backend watchdog would get there in ~6 s,
       // but leaving the webcam held after the tab is gone is a surprise.
       try { if (api.call) api.call(PANEL, 'stop', {}); } catch (e) { /* best effort */ }

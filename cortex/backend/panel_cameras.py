@@ -50,6 +50,17 @@ ROVER_HOST = "fpms1.local"
 BRIDGE = "http://%s:8781" % ROVER_HOST
 ROVER_POLL = 5.0
 
+# The thermal camera is now LIVE over ROS. It has no kernel driver and no
+# V4L2 node - a userspace libusb driver reads it and thermal_node publishes
+# it - so the frames reach the browser through rosbridge, not through this
+# backend. Sending them via panel state would put a 12 KB PNG into the SSE
+# snapshot broadcast to every client on every tick.
+ROSBRIDGE_WS = "ws://%s:9090" % ROVER_HOST
+THERMAL_IMAGE_TOPIC = "/thermal/image/compressed"
+THERMAL_IMAGE_TYPE = "sensor_msgs/msg/CompressedImage"
+THERMAL_STATS_TOPIC = "/thermal/stats"
+THERMAL_STATS_TYPE = "std_msgs/msg/Float32MultiArray"
+
 SOI = b"\xff\xd8\xff"
 EOI = b"\xff\xd9"
 
@@ -248,15 +259,20 @@ def state() -> dict:
         "thermal": {
             "where": "rover",
             "host": ROVER_HOST,
-            "present": bool(t_dev and t_dev.get("present")),
-            "usable": False,
-            "reachable": t_err is None,
-            "error": t_err,
-            "detail": (t_dev or {}).get("note"),
-            "why": "USB class 255 / subclass 240 with bulk endpoints, not UVC. "
-                   "No kernel driver binds it, so there is no V4L2 node and no "
-                   "frame to fetch. It needs a userspace libusb driver against "
-                   "an undocumented protocol.",
+            "device": "Thermal Master P1",
+            "size": [160, 120],
+            # Live as of 2026-09-10 via thermal_node over rosbridge.
+            "usable": True,
+            "rosbridge": ROSBRIDGE_WS,
+            "image_topic": THERMAL_IMAGE_TOPIC,
+            "image_type": THERMAL_IMAGE_TYPE,
+            "stats_topic": THERMAL_STATS_TOPIC,
+            "stats_type": THERMAL_STATS_TYPE,
+            "note": "No kernel driver binds this camera (USB class 255/240, "
+                    "not UVC), so there is no V4L2 node. A userspace libusb "
+                    "driver reads it and thermal_node publishes it to ROS.",
+            "colormap": "ironbow, scaled to each frame's own min/max - the "
+                        "absolute values are on /thermal/temperature",
         },
     }
 

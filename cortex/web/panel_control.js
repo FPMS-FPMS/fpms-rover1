@@ -191,7 +191,7 @@ export function mount(root, api = {}) {
     if (!up) {
       devs.append(h('div', { class: 'muted small', text: 'rover not answering' }));
     } else {
-      if (d.lidar) devs.append(devRow('LiDAR — LD19 / D500', d.lidar.present, true, d.lidar.path));
+      if (d.lidar) devs.append(devRow('LiDAR — D500', d.lidar.present, true, d.lidar.path));
       if (d.mcu) devs.append(devRow('MCU — CH340 bridge', d.mcu.present, true, d.mcu.path));
       if (d.thermal_cam) {
         devs.append(devRow('Thermal camera — Thermal Master P1',

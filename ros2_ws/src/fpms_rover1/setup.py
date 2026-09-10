@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ld19_node = fpms_rover1.ld19_node:main',
+            'thermal_node = fpms_rover1.thermal_node:main',
         ],
     },
 )
