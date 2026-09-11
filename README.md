@@ -624,3 +624,33 @@ have to change. The two stacks already disagreed before today.
 ⚠️ Those command **Rover 2** at 192.168.137.18 over ssh, *not* Rover 1 — and the
 panel says so in the UI, not just in a comment. Rover 1 has no mission service
 deployed. `Shutdown` is confirm-guarded; the others are not.
+
+## INTERNATIONALS_ROVER2.py reframed onto the shared geometry
+
+That file derived its zones from fraction constants (`ZONE_FRAC 0.10`,
+`MARGIN_FRAC 0.04`), putting m1 at (90, 1110) and m2 at (910, 1110) — **820 mm
+apart against the mission stack's 300 mm pitch at y = 1357.5**. The two stacks
+disagreed about where the zones *are*, which is worse than either being wrong.
+
+Both now share one definition. Previous values, for the record:
+
+    m1 (90.0, 1110.0)    m2 (880.0, 1075.0)    home (842.5, 157.5)
+
+**The zone centres are not driveable**, and that is the crux. They sit at
+y = 1357.5, outside the 1200 mm arena, exactly as `geometry.py` has them — the
+zones are beyond the floor on purpose. So `TARGET_COORDS` holds **derived**
+approach poses, never typed coordinates, which is the principle that block
+always claimed:
+
+    ZONE_CENTRES     m3 (242.5, 1357.5)   m1 (542.5, 1357.5)   m2 (842.5, 1357.5)
+    TARGET_COORDS    m3 (242.5, 1075.0)   m1 (542.5, 1075.0)   m2 (842.5, 1075.0)
+                     even 282 mm standoff, every body edge inside the wall
+
+The old hand-patched `m2 (880, 1075)` existed because the zone centre (910,1110)
+put the body through the wall — `910 + 115 = 1025` against a 1000 mm arena. The
+derivation makes that **impossible** rather than relying on someone noticing:
+the new m2 clears at `842.5 + 115 = 957.5`.
+
+⚠️ **This changes where Rover 2 drives.** m1 moved from x=90 to x=542.5. Test it
+with the wheels clear before a competition run. The full file is backed up as
+`INTERNATIONALS_ROVER2.py.bak-<stamp>`; `rover2-stack/` holds the changed block.
