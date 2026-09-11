@@ -654,3 +654,24 @@ the new m2 clears at `842.5 + 115 = 957.5`.
 ⚠️ **This changes where Rover 2 drives.** m1 moved from x=90 to x=542.5. Test it
 with the wheels clear before a competition run. The full file is backed up as
 `INTERNATIONALS_ROVER2.py.bak-<stamp>`; `rover2-stack/` holds the changed block.
+
+## Wifi preference: two mechanisms, because one was not enough
+
+`fpms-wpa-priority` (ExecStartPre) edits `/run/netplan/wpa-wlan0.conf` — and it
+works, but **netplan regenerates that file**, so the priority lines vanish from
+disk again. Whether wpa_supplicant read the injected version is a race.
+
+Observed 2026-09-10: the rover was correctly on FPMS_Net with **zero priority
+lines on disk**. It got the right network *by luck* — FPMS_Net happens to be
+network 0.
+
+So `fpms-wifi-priority.service` enforces it on the **running supplicant** via
+`wpa_cli`, which does not care what the file says or when it was rewritten:
+
+    priority 10 -> network 0 (FPMS_Net)
+    priority  1 -> network 1 (RUCHNIK_EXT)
+
+It deliberately does **not** reassociate when already on the preferred network —
+dropping a working link on every boot for no reason would be its own bug — and
+`TimeoutStartSec=90` ensures a rover never fails to boot because a wifi
+*preference* could not be applied.

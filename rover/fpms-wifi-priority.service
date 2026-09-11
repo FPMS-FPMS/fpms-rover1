@@ -1,0 +1,15 @@
+[Unit]
+Description=FPMS: prefer FPMS_Net on the running supplicant
+After=netplan-wpa-wlan0.service network.target
+Wants=netplan-wpa-wlan0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/fpms-wifi-priority
+# Never block boot on this: a rover that will not finish booting because a
+# wifi preference could not be applied is worse than one on the wrong SSID.
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target
