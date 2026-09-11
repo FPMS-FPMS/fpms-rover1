@@ -99,16 +99,17 @@ MARKERS = [
     #     M1 = (M2 + M3)/2  and  M3 = M1 - 300   =>   M1 = M2 - 300
     # 300 mm clears the 262 mm two-zone minimum (zone_radius 131) by 38 mm.
     #
-    # !! THIS MOVES M1 BY 130 mm FROM THE MISSION STACK CONSTANT !!
-    # geometry.py has M1 = 412.5 and carries the warning: "DO NOT re-measure
-    # these into something else. Every failure of the 2026-09-02 session traced
-    # to a zone constant that had drifted." The operator's arena wins here, but
-    # the mission stack has NOT been changed to match - if Rover 2 drives to
-    # M1 it will still go to 412.5. That divergence is deliberate and needs
-    # resolving before the two rovers share a plan.
+    # The mission stack was moved to match on 2026-09-10 - geometry.py in BOTH
+    # rover-backup trees, and panel_field.py - so Rover 2 drives to the same M1
+    # this panel draws. The divergence that existed for one commit is closed.
+    #
+    # STILL DIVERGENT, and it predates this change: INTERNATIONALS_ROVER2.py
+    # works in a DIFFERENT frame entirely - its TARGET_COORDS put m1 at
+    # (90, 1110) and m2 at (880, 1075), 820 mm apart against this frame's 300.
+    # It derives them from zone fractions rather than storing coordinates, so
+    # it cannot simply be set to 542.5; the derivation would have to change.
     {"id": "M3", "x": 242.5, "y": 1357.5, "kind": "zone", "measured": True},
-    {"id": "M1", "x": 542.5, "y": 1357.5, "kind": "zone", "measured": True,
-     "stack_x": 412.5},
+    {"id": "M1", "x": 542.5, "y": 1357.5, "kind": "zone", "measured": True},
     {"id": "M2", "x": 842.5, "y": 1357.5, "kind": "zone", "measured": True},
 ]
 

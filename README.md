@@ -590,14 +590,25 @@ and M3"*. Both solve together with M2 fixed:
 
 300 mm clears the 262 mm two-zone minimum by 38 mm.
 
-⚠️ **This moves M1 by 130 mm from the mission stack constant.** `geometry.py`
-has M1 = 412.5 and warns: *"DO NOT re-measure these into something else. Every
-failure of the 2026-09-02 session traced to a zone constant that had drifted."*
+**The mission stack was moved to match** on 2026-09-10, so Rover 2 drives to
+the same M1 this panel draws:
 
-The operator's arena wins here, but **the mission stack has not been changed to
-match** — if Rover 2 drives to M1 it still goes to 412.5. The panel shows
-`⚠ stack says 412.5` next to M1 so the divergence is visible. **Resolve it
-before the two rovers share a plan.**
+    ~/rover-backup/FPMSM2PERFECT/fpms_rover2/geometry.py            412.5 -> 542.5
+    ~/rover-backup/fpms_rover2-M2-HOME-26MM-20260904/.../geometry.py 412.5 -> 542.5
+    cortex/backend/panel_field.py                                   412.5 -> 542.5
+
+Both trees carry a `.bak-<stamp>` beside them, and each edit is annotated in
+place. `geometry.py`'s warning — *"DO NOT re-measure these into something
+else"* — was honoured to the letter: nothing was **re-measured**. The value was
+**changed by instruction**, and it says so, so the next person does not read
+542.5 as drift and quietly restore 412.5.
+
+⚠️ **One divergence remains, and it predates this.**
+`INTERNATIONALS_ROVER2.py` works in a different frame entirely — its
+`TARGET_COORDS` put `m1` at (90, 1110) and `m2` at (880, 1075), **820 mm apart
+against this frame's 300**. It *derives* those from zone fractions rather than
+storing coordinates, so it cannot simply be set to 542.5 — the derivation would
+have to change. The two stacks already disagreed before today.
 
 ## Also on the LiDAR tab
 

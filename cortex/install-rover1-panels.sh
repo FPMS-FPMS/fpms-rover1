@@ -22,7 +22,10 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="/usr/local/lib/fpms/cortex-backup-$STAMP"
 SHIM="/home/aryan/.local/bin/cortex"
 
-BACKEND_FILES=(panel_control.py panel_lidar.py panel_cameras.py)
+# panel_field.py is included because M1 moved 412.5 -> 542.5 on 2026-09-10.
+# It is a PRE-EXISTING file being overwritten, so unlike the other three it
+# must be diffed before install, the same way app.js is - see below.
+BACKEND_FILES=(panel_control.py panel_lidar.py panel_cameras.py panel_field.py)
 WEB_FILES=(panel_control.js panel_lidar.js panel_cameras.js ros.js thermal.js app.js)
 
 [ "$(id -u)" = 0 ] || { echo "run: sudo bash $0" >&2; exit 1; }
@@ -67,6 +70,18 @@ for f in "${WEB_FILES[@]}"; do
 done
 [ -s "$SRC/web/vendor/roslib.min.js" ] && echo "  ok   web/vendor/roslib.min.js" \
     || { echo "  FAIL vendor/roslib.min.js missing"; fail=1; }
+
+echo "== 2a. panel_field.py must differ ONLY by the M1 constant =="
+if [ -f "$DST/backend/panel_field.py" ]; then
+    fd=$(diff "$DST/backend/panel_field.py" "$SRC/backend/panel_field.py" | grep -c "^<")
+    fa=$(diff "$DST/backend/panel_field.py" "$SRC/backend/panel_field.py" | grep -c "^>")
+    if [ "$fd" -gt 1 ]; then
+        echo "  FAIL installed panel_field.py has $fd changed line(s); expected only M1."
+        echo "       Merge by hand rather than clobbering."; fail=1
+    else
+        echo "  ok   $fa added / $fd removed (the M1 move)"
+    fi
+fi
 
 echo "== 2. app.js must differ ONLY by the tab registration =="
 d=$(diff "$DST/web/app.js" "$SRC/web/app.js" | grep -c '^[<>]')
