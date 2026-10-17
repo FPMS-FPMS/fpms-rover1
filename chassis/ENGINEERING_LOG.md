@@ -88,3 +88,46 @@ Rendering it with the real motors and wheels as ghosts showed four problems:
   checker now refuses to run on one.
 - **Thickness of the floor offset:** the inside of a 45° belly ramp starts 1 mm before the outside does, so the
   first XY-MOS position sat 1.6 mm into the ramp.
+
+## 6. v2 - the team's review of v1 (Nikhil)
+**The review.** The motor mounts and hinge were kept. v1 had got worse on space: 239 mm long against v0's 206, 7% more
+volume, and 53% fill against 59%. The new targets:
+- 210 mm long or less;
+- a nose at most 20 mm past the worst-case wheel, with a 45° underside starting behind the wheel;
+- 0.4–0.5 mm per side in every pocket;
+- nothing outside the outline;
+- tub and shell tops matched;
+- 6–10 mm rounds on the outside edges.
+
+**What the short nose forced.**
+- With a 45° belly starting behind the wheel, there is no flat floor ahead of the front motors any more.
+- The tank (80 tall, it must stand because of its level strip), the battery, the 9 V cells and the ESP32 now stand on
+  printed ribs at deck level.
+- The two pumps are stacked, with their barbs at opposite ends so each tube-bend zone sits beside the other pump.
+- Result: 206.5 mm long and a 19.7 mm overhang.
+- The cost is height: the top is now 151.5 mm (v0 137). The front axle carries 61% instead of 74%, because the battery
+  can no longer sit 30 mm ahead of the axle.
+- The shell still holds itself closed (837 N·mm about the hinge), and that was the reason for the 70% target.
+
+**Tried and rejected.**
+- *45° slope starting just 8.8 mm behind the 86.6 mm wheel.* The curb check showed that with the 80 mm wheel a 36 mm
+  curb hits the body first. The slope now starts at X 119, and both wheel sizes pass for every curb height up to the axle.
+- *Moving the Yahboom board to a lower bay.* Those bays are 24–29 mm deep and the board is 56, so it stays on a shelf
+  over the Pi. With one shared top line this costs no height.
+- *Hanging the board from the tub cap.* At a 151.5 top, the raked tub face is too narrow for the board's front standoffs.
+- *R8 on the long top edges.* The upper pump and ESP32 ends touched the curve, so the long top edges are R6 (still in
+  the 6–10 range); the vertical edges and the front/rear top edges are R8.
+
+**What the slicer taught us.** Bambu Studio's command line sliced Print 1 and refused Print 2. Read through the bed →
+model mapping, the problems it found were:
+- the shell cap sat in the P1S's no-print corner;
+- the nose-bay walls over the front motors started in mid-air (they would need a ~140 mm bridge), so they moved onto
+  the removable pump deck;
+- the cable pass had a flat 20 mm roof, now a 45° point;
+- the E-stop hole had a round roof, now a teardrop;
+- a deck post stopped 0.5 mm above the sloped tail floor.
+
+**Clearance check.** v1 reported 0.0–0.09 mm on almost everything. That was the checker measuring points right next to
+the surface a part rests on. The rule is now: ignore the designed seat plus a 0.6 mm band beside it, and fail anything
+under 0.4 mm. Under that rule it caught real touches: the ESP32 top against the cap's side round, the servo body on a
+motor pad, and the deck wall against the pumps.

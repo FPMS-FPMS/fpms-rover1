@@ -11,7 +11,7 @@
 | Top of body (LiDAR not included) | 137.3 mm | 138.4 mm | 151.5 mm |
 | Fill: component volume / bay volume | 59.5% | 53.3% | 50.4% |
 | Fill incl. plug, fan-air and tube-bend zones | - | 61.7% | 58.2% |
-| Space claimed (convex hull) | 3537.0 cm3 | 3762.5 cm3 | 3663.2 cm3 |
+| Space claimed (convex hull) | 3537.0 cm3 | 3762.5 cm3 | 3669.6 cm3 |
 | Weight on front axle | - | 73.7% | 61.2% |
 
 v0 numbers come from the original script; its pumps had no room to bend their tubes and its tank and E-stop zones were not reserved, so its fill is flattered.
@@ -50,10 +50,10 @@ Motor bosses run in Ø12.9 holes: 0.45 mm radial by construction.
 
 ## Hinge sweep (shell + its cap, hatch, deck, components and front wheels rotated about the pin)
 
-- moves freely from -1.5 to 20.0 deg (0.25 deg steps)
-- 0 deg catch touches at -1.75 deg; 20 deg stop at 20.25 deg
+- moves freely from -1.75 to 20.0 deg (0.25 deg steps)
+- 0 deg catch touches at -2.0 deg; 20 deg stop at 20.25 deg
 - smallest gap between tub and shell as printed: 0.396 mm (target 0.4)
-- hinge-zone downward overhang steeper than 44 deg: {'main_tub': 0.0, 'front_shell': 0.0} mm2
+- hinge-zone downward overhang steeper than 44 deg: {'main_tub': 0.0, 'front_shell': 34.6} mm2
 
 ## Outline and curbs
 
@@ -76,7 +76,7 @@ Motor bosses run in Ø12.9 holes: 0.45 mm radial by construction.
 ## Bed (Bambu P1S 256 x 256)
 
 - Print 1 (tub + shell assembled): [206.5, 148.0, 123.1] mm
-- Print 2 (caps, hatch, decks, shelf, LiDAR plate): [252.5, 251.7, 83.1] mm, fits: True (76.2% of the bed)
+- Print 2 (caps, hatch, decks, shelf, LiDAR plate): [252.5, 253.5, 83.1] mm, fits: True (76.9% of the bed)
 
 ## Fill per bay (v2)
 
@@ -93,7 +93,7 @@ Dead volume in the hinge gap: v0 515.8 cm3 -> v2 288.5 cm3
 
 ## Weight and balance (estimates marked in meta.json)
 
-- total 2660 g, printed PETG ~678 g (solid-volume estimate; the slicer number replaces it)
-- CG at X 57.3 (front axle carries **61.2%**, target 70%), CG height 79.3 mm
-- front shell 1514 g with CG at X 104.8: 836.1 N.mm holds it closed about the hinge
+- total 2663 g, printed PETG ~681 g (solid-volume estimate; the slicer number replaces it)
+- CG at X 57.2 (front axle carries **61.2%**, target 70%), CG height 79.4 mm
+- front shell 1514 g with CG at X 104.8: 835.9 N.mm holds it closed about the hinge
 

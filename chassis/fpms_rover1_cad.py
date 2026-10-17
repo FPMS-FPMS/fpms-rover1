@@ -219,11 +219,13 @@ def knuckle2d():                             # rearward part chamfered 45 deg un
 def cap_up(r):                               # teardrop roof for a cylindrical pocket about the hinge axis
     return Polygon([(XH - r / math.sqrt(2), ZH + r / math.sqrt(2)), (XH, ZH + r * math.sqrt(2)), (XH + r / math.sqrt(2), ZH + r / math.sqrt(2))])
 def shell_bore2d():                          # pin seen from the shell moves by -theta
-    return unary_union([sweep2d(pin2d().buffer(GAP, 32), -1), cap_up(PIN_R + GAP)])
+    tip = affinity.translate(pin2d(), 0, -0.45).buffer(GAP, 32).intersection(sbox(XH - 4, ZH - 20, XH + 4, ZH - PIN_R))
+    return unary_union([sweep2d(pin2d().buffer(GAP, 32), -1), sweep2d(tip, -1), cap_up(PIN_R + GAP)])
 def shell_cup_pocket2d():
     return unary_union([sweep2d(cup2d().buffer(GAP, 32), -1), cap_up(CUP_R + GAP)])
-def tub_knuckle_pocket2d():
-    return unary_union([sweep2d(knuckle2d().buffer(GAP, 32), +1), cap_up(KN_R + GAP)])
+def tub_knuckle_pocket2d():                  # 1.2 over the knuckle top: the raked wall's edge bridges 19.5 mm there
+    top = knuckle2d().buffer(1.2, 32).intersection(sbox(0, ZH + 4, 200, 200))
+    return unary_union([sweep2d(knuckle2d().buffer(GAP, 32), +1), sweep2d(top, +1), cap_up(KN_R + 1.2)])
 
 # ---------------- bodies: three rounded profiles intersected, hollowed, top 8 mm split off as the cap ----------------
 def tub_profile():
@@ -268,10 +270,10 @@ def motor_mount(w, xa):
         w = w.union(bx(xa - 15, xa + 15, g0, g1, FLOOR - 0.5, 43).cut(cyl_y(xa, ZGB, M_GB_R + CLR, -100, 100)))
         c0, c1 = sorted((s * 26.0, s * (M_FACE - M_GB_L - 1.0)))
         w = w.union(bx(xa - 14, xa + 14, c0, c1, FLOOR - 0.5, 44).cut(cyl_y(xa, ZGB, M_CAN_R + CLR, -100, 100)))
-        t0, t1 = sorted((s * 16.0, s * 23.0))                                                                 # strap block, encoder end
+        t0, t1 = sorted((s * 15.4, s * 23.6))                                                                 # strap block, encoder end
         blk = bx(xa - 14, xa + 14, t0, t1, FLOOR - 0.5, 44).cut(cyl_y(xa, ZGB, M_CAN_R + CLR, -100, 100))
         u0, u1 = sorted((s * 16.6, s * 22.4))
-        blk = blk.cut(bx(xa - 20, xa + 20, u0, u1, FLOOR - 0.6, ZGB - M_CAN_R))                               # tie tunnel under the can
+        blk = blk.cut(bx(xa - 20, xa + 20, u0, u1, FLOOR - 0.6, ZGB - M_CAN_R + 3.0))                               # tie tunnel under the can
         w = w.union(blk)
     w = w.cut(cyl_y(xa, ZGB, M_GB_R + CLR, M_FACE - M_GB_L - 1, M_FACE + 0.01)).cut(
         cyl_y(xa, ZGB, M_GB_R + CLR, -M_FACE - 0.01, -(M_FACE - M_GB_L - 1)))                                 # trough so the gearbox clears the floor
@@ -319,7 +321,7 @@ def main_tub():
     t = t.union(ledge(XRI, XRI + 3, -WI + 10, OPI_Y1 - 4, DECK_Z0, axis='x', into=+1))
     t = t.union(ledge(XRI + 12, -PAD_HALF, -WI, -WI + 3, DECK_Z0, axis='y', into=+1))
     for (px, py) in ((XRI + 8.0, TUB_DECK_Y1 - 4.0), (TUB_DECK_X1 - 5.0, TUB_DECK_Y1 - 4.0)):
-        floor_here = FLOOR if px > TAIL_X - 2 else FLOOR + (TAIL_X - px) - 2      # sinks into the sloped tail floor
+        floor_here = FLOOR if px > TAIL_X - 2 else FLOOR + (TAIL_X - px) - 7      # sinks well into the sloped tail wall
         t = deck_post(t, px, py, DECK_Z0, floor_here)
     # board shelf ledges: right wall, rear wall, and a gusset on the raked front wall
     t = t.union(ledge(XRI + 10, tub_face_in(SHELF_Z0) - 1, -WI, -WI + 3, SHELF_Z0, axis='y', into=+1))
@@ -359,6 +361,7 @@ def main_tub():
         a, b = sorted((s * 30.0, s * W))
         t = t.union(prism_y(pin2d(), a, b))
     t = t.cut(prism_x(CABLE_PASS, J_TUB - 12, J_TUB + 1))                                 # cable pass through the joint
+    t = t.cut(prism_y(Polygon([(J_TUB + 0.1, BELLY - 0.1), (J_TUB - 0.9, BELLY - 0.1), (J_TUB + 0.1, BELLY + 0.9)]), -W - 2, W + 2))  # no first-layer weld
     for (dx, dy) in ((-17, 0), (38, 55), (38, -55)):
         t = t.cut(cyl_z(dx, dy, 2, BELLY - 1, FLOOR + 1))
     return t
@@ -403,8 +406,9 @@ def front_shell():
         post = bx(p0, p1, ESP_SLOT[0], ESP_SLOT[1], FLOOR - 0.5, SERVO_Z0 + SERVO['ear_z']).intersect(cav)
         f = f.union(post).cut(cyl_z((p0 + p1) / 2, sum(ESP_SLOT) / 2, 0.9, SERVO_Z0 + SERVO['ear_z'] - 8, SERVO_Z0 + 30))
     # refill-arm window in the right wall, ahead of the wheel, at horn height
+    wm = (ARM_WIN[0] + ARM_WIN[1]) / 2
     f = f.cut(prism_y(Polygon([(ARM_WIN[0], SERVO_TOP + 1), (ARM_WIN[1], SERVO_TOP + 1), (ARM_WIN[1], SERVO_TOP + 7),
-                               (ARM_WIN[1] - 6, SERVO_TOP + 13), (ARM_WIN[0] + 6, SERVO_TOP + 13), (ARM_WIN[0], SERVO_TOP + 7)]), -W - 5, -WI + 0.5))
+                               (wm, SERVO_TOP + 7 + (ARM_WIN[1] - wm)), (ARM_WIN[0], SERVO_TOP + 7)]), -W - 5, -WI + 0.5))
     # XY-MOS x2 standing in the bay behind the front motors (wired once, next to the pumps they switch)
     for yc in XYMOS_Y:
         x0, x1 = XYMOS_X[0] - CLR, XYMOS_X[1] + CLR
@@ -433,6 +437,7 @@ def front_shell():
         a, b = sorted((s * (KN_Y[0] - 1), s * (KN_Y[1] + 1)))
         f = f.cut(prism_y(shell_bore2d(), a, b))
     f = f.cut(prism_x(CABLE_PASS, J_SH - 1, J_SH + T + 1))                               # cable pass
+    f = f.cut(prism_y(Polygon([(J_SH - 0.1, BELLY - 0.1), (J_SH + 0.9, BELLY - 0.1), (J_SH - 0.1, BELLY + 0.9)]), -W - 2, W + 2))
     for (dx, dy) in ((100, 0), (118, -20)):
         f = f.cut(cyl_z(dx, dy, 2, BELLY - 1, FLOOR + 2))
     return f
@@ -462,8 +467,8 @@ def cap_of(raw, trim_at_joint):
     return c
 
 def tub_cap():
-    c = cap_of(tub_raw(), prism_y(Polygon([(tub_face_x(Z_SPLIT - 30) - 1.5, Z_SPLIT - 30), (200, Z_SPLIT - 30), (200, H + 50),
-                                           (tub_face_x(H + 50) - 1.5, H + 50)]), -W - 5, W + 5))
+    c = cap_of(tub_raw(), prism_y(Polygon([(tub_face_x(Z_SPLIT - 30) - 0.6, Z_SPLIT - 30), (200, Z_SPLIT - 30), (200, H + 50),
+                                           (tub_face_x(H + 50) - 0.6, H + 50)]), -W - 5, W + 5))
     for (hx, hy) in TUB_BOSSES:
         c = c.cut(cyl_z(hx, hy, 1.7, H_IN - 1, H + 1))
     for (px, py) in LIDAR_PADS:                                       # LiDAR plate screws: pads under the cap (prints top-down)
@@ -472,7 +477,7 @@ def tub_cap():
     return c
 
 def shell_cap():
-    c = cap_of(shell_raw()[0], bx(J_SH - 10, J_SH + 1.5, -W - 5, W + 5, Z_SPLIT - 1, H + 5))
+    c = cap_of(shell_raw()[0], bx(J_SH - 10, J_SH + 0.6, -W - 5, W + 5, Z_SPLIT - 1, H + 5))
     c = c.cut(hatch_box(0.0))                                         # tank lifts straight out here
     for (hx, hy) in SHELL_BOSSES:
         c = c.cut(cyl_z(hx, hy, 1.7, H_IN - 1, H + 1))
@@ -510,7 +515,7 @@ def tub_shelf():
     s = prism_z(rrect(XRI + 0.3, x1, -WI + 0.3, y1, (max(0.5, R_V - T - 0.3), 1, 1, 1)), SHELF_Z0, SHELF_Z1)
     s = s.union(bx(XRI + 4, x1 - 4, y1 - 2.0, y1, SHELF_Z0 - 7, SHELF_Z0))         # stiffening rib under the free edge
     for (hx, hy) in BOARD_HOLES:
-        s = s.union(cyl_z(hx, hy, 2.6, SHELF_Z1 - 0.1, BOARD_Z0)).cut(cyl_z(hx, hy, 1.1, SHELF_Z0 - 1, BOARD_Z0 + 1))
+        s = s.cut(cyl_z(hx, hy, 1.35, SHELF_Z0 - 1, BOARD_Z0 + 1))              # M2.5 through: board on 2 mm nylon spacers
     fx, fy = (OPI_X0 + OPI_X1) / 2, (OPI_Y0 + OPI_Y1) / 2                           # open over the Pi's fan
     return s.cut(prism_z(rrect(fx - 18, fx + 18, fy - 18, fy + 18, (4, 4, 4, 4)), SHELF_Z0 - 1, SHELF_Z1 + 1))
 
@@ -524,7 +529,7 @@ def pump_deck():
     # gussets on the pump side, only where neither pump nor a bend zone is: left end full height, right end above the lower pump
     py1 = WI - CLR - PUMP_UP_SHIFT
     for (ya, yb, za, zb) in ((py1 + CLR, WI - 0.3, DECK_Z1, H_IN - 0.05), (-WI + 0.3, -WI + CLR + PUMP[1] - PUMP[1] + 7.5, P_Z[1] + CLR, 125.0)):
-        d = d.union(prism_y(Polygon([(w0 + 0.01, za), (w0 - 8, za), (w0 + 0.01, za + 8)]), ya, yb).union(bx(w0 - 2.5, w0 + 0.01, ya, yb, za, zb)))
+        d = d.union(prism_y(Polygon([(w0 + 0.01, za), (w0 - 8, za + 8), (w0 + 0.01, za + 8)]), ya, yb).union(bx(w0 - 2.5, w0 + 0.01, ya, yb, za, zb)))
     for yy in (-45.0, 45.0):                                                     # two straps round the pump stack
         for xx in (x0 + 0.8, w0 - 9.8):
             d = d.cut(bx(xx, xx + 3.0, yy - 3.5, yy + 3.5, DECK_Z0 - 1, DECK_Z1 + 1))
@@ -534,7 +539,7 @@ def pump_deck():
 def lidar_mount():
     """flat plate for the D500 on the tub cap: 4 x M3 into the cap pads, 3 x M2.5 from the LiDAR into the plate"""
     cx, z0 = LIDAR['cx'], H
-    m = prism_z(rrect(cx - LIDAR['fp'][0] / 2 - 1.5, cx + LIDAR['fp'][0] / 2 + 1.5, -LIDAR['fp'][1] / 2 - 1.5, LIDAR['fp'][1] / 2 + 1.5,
+    m = prism_z(rrect(cx - LIDAR['fp'][0] / 2 - 1.5, cx + LIDAR['fp'][0] / 2 + 5.5, -LIDAR['fp'][1] / 2 - 1.5, LIDAR['fp'][1] / 2 + 1.5,
                       (5, 5, 5, 5)), z0, z0 + LIDAR['plate'])
     m = try_fillet(m, '>Z', 1.0)
     for (hx, hy) in LIDAR_HOLES:
