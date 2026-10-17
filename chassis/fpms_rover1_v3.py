@@ -58,14 +58,14 @@ ASM_ANG = (180, 60, -60)
 # own lane along the right wall. The right third of the nose is the plumbing bay (refill-arm servo low at the front, ESP32
 # standing over it behind a splash wall); the tank stands next to it, the battery against the left wall.
 PUMP = (50.0, 100.0, 40.0)          # team: 100 x 40 x 50 with fittings; lying: 50 deep (X), 100 across (Y), 40 tall
-BEND = 30.0                         # 6x9 silicone: R25 bend + tube radius beyond the barb tip
+BEND = 31.15                        # 6x9 silicone: R25 bend + tube radius + 1.6 mm of play beyond the barb tip
 P_X0 = J_SH + T + CLR
 P_X1 = P_X0 + PUMP[0]
 P_XC = (P_X0 + P_X1) / 2            # barbs on the pump axis (pump rotated so the two barbs are one above the other)
 P_Z = (DECK_Z1, DECK_Z1 + PUMP[2], DECK_Z1 + 2 * PUMP[2])
 P_Y = (-WI + CLR + BEND, -WI + CLR + BEND + PUMP[1])        # both pumps; barb tips at P_Y[0], bend zone to the right wall
 BARB_DZ = 7.0                       # barbs +-7 about the pump centre line (assumed; measure the pump)
-BARBS = {'spray_in': P_Z[0] + 20 - BARB_DZ, 'spray_out': P_Z[0] + 20 + BARB_DZ,     # lower pump = SPRAY
+BARBS = {'spray_out': P_Z[0] + 20 - BARB_DZ, 'spray_in': P_Z[0] + 20 + BARB_DZ,     # lower pump = SPRAY (outlet climbs)
          'refill_in': P_Z[1] + 20 - BARB_DZ, 'refill_out': P_Z[1] + 20 + BARB_DZ}   # upper pump = REFILL
 TUBE_R = 4.5                        # 6x9 silicone
 DIV = 1.2
@@ -109,7 +109,7 @@ SERVO_Z0 = math.ceil((NOSE_SLOPE_IN(SERVO_X1) + CLR) * 10) / 10
 SERVO_PZ = SERVO_Z0 + SERVO['body'][1] / 2
 SERVO_TOP = SERVO_Z0 + SERVO['body'][1]
 SERVO_Y = (-WI, -WI + SERVO['body'][2])
-ESP_X = (NOSE_I - CLR - ESP[0], NOSE_I - CLR)
+ESP_X = (NOSE_I - CLR - 1.6 - ESP[0], NOSE_I - CLR - 1.6)       # 1.6 behind the nose wall: room for the front rail
 ESP_Y = (BAY[1] - CLR - ESP[1], BAY[1] - CLR)
 ESP_Z0 = SERVO_TOP + CLR + 1.6 + CLR                                 # on a ledge plate over the servo
 ESP_Z1 = ESP_Z0 + ESP[2]
@@ -336,7 +336,7 @@ def channel(w, x0, x1):                      # cable channel on the centreline: 
 
 def cap_boss(w, x, y_wall, into, along='x'):
     """cap screw column on a wall: rises from a 45 deg gusset up to the cap's underside (M3 pilot Ø2.6)"""
-    L, D, z0 = 7.0, 6.0, Z_SPLIT - 9.0
+    L, D, z0 = 7.0, 6.0, Z_SPLIT - 6.0
     prof = Polygon([(y_wall, H_IN), (y_wall + into * D, H_IN), (y_wall + into * D, z0), (y_wall, z0 - D)])
     if along == 'x':
         g = prism_x(prof, x - L / 2, x + L / 2); hx, hy = x, y_wall + into * D / 2
@@ -433,6 +433,7 @@ def estop_guard(t):
         y0 = ey + s * (ESTOP['head_r'] + g['gap']); a, b = sorted((y0, y0 + s * g['t']))
         prof = Polygon([(XRO + 0.6, ez - g['half_h'] - reach), (XRO - reach, ez - g['half_h']), (XRO - reach, ez + g['half_h']),
                         (XRO + 0.6, ez + g['half_h'])])
+        prof = round_convex(prof, 6.0, sbox(XRO - reach - 1, ez - 100, XRO - 0.5, ez + 100))   # R6 outer corners
         fin = prism_y(prof, a, b)
         t = t.union(fin)
     return t
@@ -444,7 +445,7 @@ def as5600_tub(t):
     pocket = Point(XH, ZH).buffer(AS['lug_r'] + GAP, 64).union(cap_up(AS['lug_r'] + GAP))
     t = t.cut(prism_y(pocket, AS['y_lug0'] - GAP, AS['y_mag'] + GAP))
     # board slot: through the joint wall, plus a 1 mm recess in the floor under the board
-    t = t.cut(bx(XH - b / 2 - CLR, J_TUB + 1, ys - CLR, ys + AS['pcb'] + CLR, ZH - b / 2 - 1.0, ZH + b / 2 + CLR))
+    t = t.cut(bx(XH - b / 2 - CLR, J_TUB + 1, ys - AS['chip_h'] - CLR, ys + AS['pcb'] + CLR, ZH - b / 2 - 1.0, ZH + b / 2 + CLR))
     # holder: two rails on the tub side gripping the board's -X edge region (board slides in from above)
     for (y0, y1) in ((ys - CLR - 2.0, ys - CLR), (ys + AS['pcb'] + CLR, ys + AS['pcb'] + CLR + 2.0)):
         rail = bx(XH - b / 2 - CLR - 2.0, XH - b / 2 + 4.0, y0, y1, FLOOR - 0.5, ZH + b / 2)
@@ -478,25 +479,20 @@ def load_tubes():
     return {k: [tuple(q) for q in v] for k, v in d['paths'].items()}
 TUBES = load_tubes()
 
-def tube_solid(pts, r, step=6.0):
-    """capsule chain along a polyline (resampled), for ghosts and clearance cuts"""
+def tube_solid(pts, r, step=8.0):
+    """circle swept along a smooth spline through the routed centreline (one clean solid, for ghosts and clearance cuts)"""
     import numpy as np
     P = np.asarray(pts, float)
-    seg = np.linalg.norm(np.diff(P, axis=0), axis=1); s = np.concatenate([[0], np.cumsum(seg)])
-    n = max(2, int(math.ceil(s[-1] / step)) + 1)
-    t = np.linspace(0, s[-1], n)
-    Q = np.stack([np.interp(t, s, P[:, k]) for k in range(3)], 1)
-    out = None
-    for a, b in zip(Q[:-1], Q[1:]):
-        d = b - a; L = float(np.linalg.norm(d))
-        if L < 1e-6:
-            continue
-        c = cq.Workplane(obj=cq.Solid.makeCylinder(r, L, cq.Vector(*a), cq.Vector(*(d / L))))
-        out = c if out is None else out.union(c)
-    for q in Q:
-        sp = cq.Workplane(obj=cq.Solid.makeSphere(r, cq.Vector(*q), angleDegrees1=-90, angleDegrees2=90))
-        out = out.union(sp)
-    return out
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1); s_ = np.concatenate([[0], np.cumsum(seg)])
+    n = max(3, int(math.ceil(s_[-1] / step)) + 1)
+    t = np.linspace(0, s_[-1], n)
+    Q = np.stack([np.interp(t, s_, P[:, k]) for k in range(3)], 1)
+    edge = cq.Edge.makeSpline([cq.Vector(*q) for q in Q])
+    path = cq.Wire.assembleEdges([edge])
+    t0 = edge.tangentAt(0)
+    prof = cq.Wire.makeCircle(r, cq.Vector(*Q[0]), t0)
+    solid = cq.Solid.sweep(prof, [], path, makeSolid=True, isFrenet=False, mode=None, transitionMode='right')
+    return cq.Workplane(obj=solid)
 
 def noz_axis():
     c, s_ = math.cos(math.radians(NOZ['angle'])), math.sin(math.radians(NOZ['angle']))
@@ -525,7 +521,7 @@ SERVO_EAR = (SERVO_X1 - SERVO['body'][0] - (SERVO['ears'] - SERVO['body'][0]) / 
 ESP_LAYERS = dict(pins=(ESP_Y[0], ESP_Y[0] + 6.0), plastic=(ESP_Y[0] + 6.0, ESP_Y[0] + 8.5), pcb=(ESP_Y[0] + 8.5, ESP_Y[0] + 10.1),
                   comp=(ESP_Y[0] + 10.1, ESP_Y[1]))
 ESP_RAIL_Z1 = ESP_Z0 + 50.0
-WIN = dict(x=(110.0, 136.0), z=(86.0, 99.0))           # refill-hose window in the right wall (hose enters near the pivot)
+WIN = None                                             # refill-hose window: computed below from the modelled hose
 DRAINS_SHELL = [(100.0, 0.0), (116.0, -60.0), (116.0, -16.0), (116.0, 40.0), (116.0, 62.0)]
 DRAIN_R = 1.75
 
@@ -548,7 +544,7 @@ def front_shell():
     for yb in (BAY[1], TANK_SLOT[1]):
         f = f.union(bx(X_RIB0 - 0.01, NOSE_I + 0.5, yb, yb + DIV, FLOOR - 0.5, H_IN).intersect(cav))
     f = servo_mount(f, cav)
-    f = esp_mount(f, cav)
+    f = esp_support(f, cav)
     f = nozzle_mount(f, cav)
     # refill-hose window in the right wall, pointed roof
     xm = sum(WIN['x']) / 2
@@ -589,6 +585,8 @@ def front_shell():
         f = f.cut(cyl_z(dx, dy, DRAIN_R, BELLY - 1, FLOOR + 2))
     for name, pts in TUBES.items():                                                       # tube passages through ribs/walls
         f = f.cut(tube_solid(pts, TUBE_R + CLR).intersect(bx(S2_X0 - 1, NOSE_I + 0.4, -WI + 0.3, WI - 0.3, FLOOR, H_IN)))
+    for (fx, fy, fz) in TANK_FIT_PTS:                                                     # fitting stubs through the wall
+        f = f.cut(cyl_y(fx, fz, 4.0 + CLR, BAY[1] - 1.0, TANK_SLOT[0] + 1.0))
     return f
 
 def servo_mount(f, cav):
@@ -602,35 +600,41 @@ def servo_mount(f, cav):
     f = f.union(bx(SERVO_X1 - 18.0, SERVO_X1 - 2.0, SERVO_Y[0] + 14.0, SERVO_Y[0] + 15.6, FLOOR - 0.5, SERVO_Z0).intersect(cav))
     return f
 
-def esp_mount(f, cav):
-    """ESP32 standing on a ledge plate over the servo, gripped on BOTH long edges by C-rails (back face on the header
-    plastic, lip on the component side, clear of the pins), splash wall on the wet (tube) side; USB end up under a cap slot"""
-    z0 = SERVO_TOP + CLR
-    plate = bx(ESP_X[0] - 2.4, NOSE_I + 0.5, ESP_Y[0] - CLR - 1.2, BAY[1] + 0.01, z0, z0 + 1.6)
-    f = f.union(plate)
-    gus = Polygon([(SERVO_Y[1] + CLR, z0 + 0.01), (BAY[1] + 0.01, z0 + 0.01), (BAY[1] + 0.01, z0 - (BAY[1] - SERVO_Y[1] - CLR))])
-    f = f.union(prism_x(gus, ESP_X[0] - 2.4, NOSE_I + 0.5))
+ESP_CAR_Z0 = SERVO_TOP + CLR                                     # carrier plate underside
+
+def esp_support(f, cav):
+    """gusset ledge along the bay | tank wall that the ESP32 carrier sits on (45 deg underside, clear of the servo)"""
+    z0 = ESP_CAR_Z0 - 0.01
+    w = BAY[1] - (SERVO_Y[1] + CLR)
+    gus = Polygon([(SERVO_Y[1] + CLR, z0), (BAY[1] + 0.01, z0), (BAY[1] + 0.01, z0 - w)])
+    return f.union(prism_x(gus, ESP_X[0] - 2.4, NOSE_I + 0.5))
+
+def esp_carrier():
+    """drop-in ESP32 carrier (fitted after the servo): plate on the gusset ledge, C-rails on BOTH long edges (back face on
+    the header plastic, 0.8 lip on the component side, clear of the pins), splash wall on the wet (tube) side"""
+    z0 = ESP_CAR_Z0
+    x0, x1 = ESP_X[0] - 2.4, NOSE_I - CLR
+    c = bx(x0, x1, ESP_Y[0] - CLR - 1.2, BAY[1] - CLR, z0, z0 + 1.6)
     pl, lp = ESP_LAYERS['plastic'], ESP_LAYERS['comp']
+    z1 = z0 + 1.6
     for edge, out in ((ESP_X[0], -1), (ESP_X[1], +1)):
-        xo = (edge - 2.4, edge) if out < 0 else (edge, NOSE_I + 0.5)                        # web outside the board
-        xi = (edge, edge + 0.8) if out < 0 else (edge - 0.8, edge)                          # lips 0.8 onto the board
-        z1 = z0 + 1.6
-        web = bx(xo[0], xo[1], ESP_Y[0] - CLR - 1.2, lp[0] + 1.45, z1 - 0.01, ESP_RAIL_Z1)
-        back = bx(min(xi), max(xi), ESP_Y[0] - CLR - 1.2, pl[0], z1 - 0.01, ESP_RAIL_Z1)
-        lip = bx(min(xi), max(xi), lp[0], lp[0] + 1.45, z1 - 0.01, ESP_RAIL_Z1)
-        f = f.union(web).union(back).union(lip)
-    f = f.union(bx(ESP_X[0] - 2.4, NOSE_I + 0.5, ESP_Y[0] - CLR - 1.2, ESP_Y[0] - CLR, z0, ESP_Z1 - 10.0))  # splash wall
-    return f
+        xo = (edge - 2.4, edge) if out < 0 else (edge, x1)
+        xi = (edge, edge + 0.8) if out < 0 else (edge - 0.8, edge)
+        c = c.union(bx(xo[0], xo[1], ESP_Y[0] - CLR - 1.2, lp[0] + 1.45, z1 - 0.01, ESP_RAIL_Z1))
+        c = c.union(bx(min(xi), max(xi), ESP_Y[0] - CLR - 1.2, pl[0], z1 - 0.01, ESP_RAIL_Z1))
+        c = c.union(bx(min(xi), max(xi), lp[0], lp[0] + 1.45, z1 - 0.01, ESP_RAIL_Z1))
+    c = c.union(bx(x0, x1, ESP_Y[0] - CLR - 1.2, ESP_Y[0] - CLR, z0, ESP_Z1 - 10.0))          # splash wall
+    return c
 
 def nozzle_mount(f, cav):
     """cradle hanging off the front wall under the tip hub (45 deg underside), needle exits through a teardrop hole and
     ends 0.6 behind the nose face; a zip tie through the cradle holds the hub down"""
     f = f.cut(nozzle_solid(CLR))
-    xa, xb = NOSE_I - 14.0, NOSE_I + 0.5
+    xa, xb = TANK_X[1] + CLR + 0.5, NOSE_I + 0.5             # starts ahead of the tank
     za, zb = noz_z(xa), noz_z(xb)
     rr = NOZ['r'] + CLR + 2.0
     prof = Polygon([(xa, za), (xb, zb), (xb, za - rr - (xb - xa)), (xa, za - rr)])
-    c = prism_y(prof, -rr, rr).cut(nozzle_solid(CLR))
+    c = prism_y(prof, -rr, TANK_SLOT[1] + DIV).cut(nozzle_solid(CLR))
     c = c.cut(prism_y(Polygon([(xa - 1, za), (xb + 1, zb), (xb + 1, zb + 30), (xa - 1, za + 30)]), -rr - 1, rr + 1))   # open top
     xt = (xa + xb) / 2 - 3
     c = c.cut(bx(xt - 1.5, xt + 1.5, -rr - 1, rr + 1, noz_z(xt) - NOZ['r'] - CLR - 1.6, noz_z(xt) - NOZ['r'] - CLR))  # tie slot
@@ -682,7 +686,7 @@ def tub_cap():
 
 BATT_HATCH = (S2_X0 - DIV / 2, TANK_SLOT[1] + DIV / 2)           # x0, y0 of the battery hatch (to the front/left edges)
 TANK_HATCH = (S2_X0 - DIV / 2, BAY[1] + DIV / 2, TANK_SLOT[1] + DIV / 2)
-NINE_Z0 = BATT_Z[1] + CLR + 1.2                                   # 9 V cells lie flat on the hatch cradle's floor
+NINE_Z0 = BATT_Z[1] + CLR + 0.8                                   # 9 V cells lie flat on the hatch cradle's floor
 
 def batt_hatch_box(shrink):
     return bx(BATT_HATCH[0] + shrink, NOSE + 10, BATT_HATCH[1] + shrink, W + 10, Z_SPLIT - 1, H + 5)
@@ -706,9 +710,9 @@ def batt_hatch():
     c = shell_raw()[0].intersect(ABOVE()).intersect(batt_hatch_box(CLR))
     x0, x1 = NINE_X
     y0, y1 = NINE_Y[0][0] - 1.6, NINE_Y[1][1] + 1.6
-    zf = NINE_Z0 - 1.2
-    tray = bx(x0 - 1.6, x1 + 1.6, y0, y1, zf, zf + 1.2)
-    for (xa, xb) in ((x0 - 1.6, x0), (x1, x1 + 1.6)):                 # end walls carry the tray from the hatch
+    zf = NINE_Z0 - 0.8
+    tray = bx(x0 - 1.2, x1 + 1.6, y0, y1, zf, zf + 0.8)
+    for (xa, xb) in ((x0 - 1.2, x0), (x1, x1 + 1.6)):                 # end walls carry the tray from the hatch
         tray = tray.union(bx(xa, xb, y0, y1, zf, H_IN + 0.5))
     for (ya, yb) in NINE_Y:                                             # port cut-outs in the end walls (port face unknown)
         tray = tray.cut(bx(x0 - 2, x0 + 0.1, ya + 3, yb - 3, NINE_Z0 + 2, NINE_Z0 + NINE[2] - 2))
@@ -748,7 +752,6 @@ def pump_deck():
     x0, x1 = J_SH + T + 0.3, S2_X0 - 0.3
     d = prism_z(rrect(x0, x1, -WI + 0.3, WI - 0.3, (1, 1, 1, 1)), DECK_Z0, DECK_Z1)
     lip = 2.0
-    d = d.union(bx(x0, x0 + 1.2, -WI + 0.3, WI - 0.3, DECK_Z1 - 0.1, DECK_Z1 + lip))
     for s in (1, -1):
         a, b = sorted((s * (WI - 0.3), s * (WI - 1.5)))
         d = d.union(bx(x0, P_X1, a, b, DECK_Z1 - 0.1, DECK_Z1 + lip))
@@ -768,6 +771,7 @@ def pump_deck():
         prism_z(rrect(XF - 10, XF + 6, -6, 6, (2, 2, 2, 2)), DECK_Z0 - 1, DECK_Z1 + lip + 1)))
     for name, pts in TUBES.items():
         d = d.cut(tube_solid(pts, TUBE_R + CLR).intersect(bx(w0 - 1, x1 + 1, -WI, WI, DECK_Z1, H_IN)))
+    d = d.cut(bx(w0 - 1, x1 + 1, NINE_Y[0][0] - 1.6 - CLR, NINE_Y[1][1] + 1.6 + CLR, NINE_Z0 - 0.8 - CLR, H_IN + 1))   # 9 V cradle notch
     return d
 
 def lidar_mount():
@@ -817,9 +821,9 @@ def arm_solid(deg_below, with_strainer=True):
     a = cq.Workplane('XZ').center(ARM['reach'] / 2 - ARM['back'] / 2, 0).rect(ARM['len'], ARM['w']).extrude(-(ARM['y'][1] - ARM['y'][0]))
     a = a.translate((0, ARM['y'][0], 0))
     try:
-        a = a.edges('|Y').fillet(3.0)
+        a = a.edges('|Y').fillet(6.0)                                  # R6 on the long edges (brief: R6-R8 on everything new)
     except Exception:
-        pass
+        a = a.edges('|Y').fillet(3.0)
     a = a.cut(cyl_y(0, 0, 4.2, ARM['y'][1] - 3.0, ARM['y'][1] + 1))                                 # horn hub
     a = a.cut(bx(0, 18.0, ARM['y'][1] - 2.0, ARM['y'][1] + 1, -3.0, 3.0))                           # horn arm
     a = a.cut(cyl_y(0, 0, 1.1, ARM['y'][0] - 1, ARM['y'][1] + 1))                                   # horn screw
@@ -872,9 +876,9 @@ def components():
         z0 = P_Z[i]
         C[('pump_lower', 'pump_upper')[i]] = (bx(P_X0, P_X1, P_Y[0], P_Y[1], z0, z0 + PUMP[2]), 'shell', 'shell_upper', 75, 'estimate', 'bottom')
     tank = bx(TANK_X[0], TANK_X[1], TANK_SLOT[0] + CLR, TANK_SLOT[1] - CLR, *TANK_Z)
-    for (fx, fy) in TANK_FITS:
-        tank = tank.union(cyl_z(fx, fy, 5.0, TANK_Z[1] - 0.01, TANK_Z[1] + TANK_FIT - 6.0)).union(
-            cyl_y(fx, TANK_Z[1] + TANK_FIT - 6.0, 4.0, TANK_SLOT[0] + CLR - 2.0, fy))
+    for (fx, fyy, fz) in TANK_FIT_PTS:                         # 90 deg elbow barbs on the tank top, outlets toward the bay
+        fy = (TANK_SLOT[0] + CLR) + 6.0
+        tank = tank.union(cyl_z(fx, fy, 4.5, TANK_Z[1] - 0.01, fz)).union(cyl_y(fx, fz, 4.0, fyy + 1.0, fy))
     C['tank_water'] = (tank, 'shell', 'nose', 125, 'estimate (tank ~30 g + ~95 ml water)', 'bottom')
     C['battery_3s2p'] = (bx(S2_X0 + CLR, S2_X0 + CLR + BATT[0], BAT_SLOT[0] + CLR, BAT_SLOT[0] + CLR + BATT[1], *BATT_Z),
                          'shell', 'nose', 310, 'team', 'bottom')
@@ -930,8 +934,67 @@ def trim_ends(pts, d):
     t = np.linspace(d, s[-1] - d, max(3, int((s[-1] - 2 * d) / 2)))
     return [tuple(np.interp(tt, s, P[:, k]) for k in range(3)) for tt in t]
 
-TANK_FITS = [(110.0, (TANK_SLOT[0] + CLR) + 6.0), (122.5, (TANK_SLOT[0] + CLR) + 6.0)]
-NINE_X = (S2_X0 + CLR + 0.8, S2_X0 + CLR + 0.8 + NINE[0])
+def tube_end_at_tank(name, end):
+    q = TUBES.get(name)
+    return None if not q else q[end]
+TANK_FIT_PTS = [tuple(q) for q in (tube_end_at_tank('R-out', -1), tube_end_at_tank('S-in', 0)) if q] or \
+               [(117.5, -37.5, 152.5), (107.5, -37.5, 150.0)]
+TANK_FITS = [(q[0], (TANK_SLOT[0] + CLR) + 6.0) for q in TANK_FIT_PTS]
+
+HOSE_S0 = 30.0                      # the intake hose is clipped along the arm from the strainer back to 30 mm from the pivot
+
+def _bez(p0, t0, p3, t3, h0, h3, n):
+    import numpy as np
+    b1, b2 = p0 + t0 * h0, p3 - t3 * h3
+    ts = np.linspace(0, 1, n)[:, None]
+    return (1 - ts) ** 3 * p0 + 3 * (1 - ts) ** 2 * ts * b1 + 3 * (1 - ts) * ts ** 2 * b2 + ts ** 3 * p3
+
+def _minr(P, span=12):
+    import numpy as np
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1); s_ = np.concatenate([[0], np.cumsum(seg)])
+    t = np.arange(0, s_[-1], 1.0); Q = np.stack([np.interp(t, s_, P[:, k]) for k in range(3)], 1)
+    best = 1e9
+    for i in range(span, len(Q) - span, 2):
+        a_, b_, c_ = Q[i - span], Q[i], Q[i + span]
+        A, B, C_ = np.linalg.norm(b_ - c_), np.linalg.norm(a_ - c_), np.linalg.norm(a_ - b_)
+        ar = np.linalg.norm(np.cross(b_ - a_, c_ - a_)) / 2
+        if ar > 1e-9:
+            best = min(best, A * B * C_ / (4 * ar))
+    return best
+
+@functools.lru_cache(None)
+def hose_outside(deg_below, n=60):
+    """intake hose outside the body: clipped along the arm's outer face from the strainer to HOSE_S0 from the pivot, then
+    a free loop through the right-wall window into the routed refill-in tube (which starts inside heading -X). The loop's
+    two handle lengths are chosen to give the largest smallest bend radius."""
+    import numpy as np
+    a = math.radians(deg_below); u = np.array([math.cos(a), 0, -math.sin(a)])
+    piv = np.array([SERVO_PX, ARM['y'][0], SERVO_PZ])
+    p_tip = piv + u * (ARM['reach'] + ARM['strainer'][1] - 2.0); p0 = piv + u * HOSE_S0
+    q = TUBES.get('R-in')
+    p3 = np.array(q[0]) if q else np.array([130.0, -67.5, 92.5])
+    t0 = -u; t3 = np.array([-1.0, 0.0, 0.0])
+    best = None
+    for h0 in range(10, 95, 5):
+        for h3 in range(10, 95, 5):
+            B = _bez(p0, t0, p3, t3, h0, h3, 80)
+            r = _minr(B)
+            if best is None or r > best[0]:
+                best = (r, h0, h3)
+    B = _bez(p0, t0, p3, t3, best[1], best[2], n)
+    return np.vstack([np.linspace(p_tip, p0, 12), B[1:]])
+
+def _window():
+    import numpy as np
+    xs, zs = [], []
+    for deg in (ARM['stowed_deg'], ARM['deployed_deg']):
+        H_ = hose_outside(deg, 200)
+        sel = H_[(H_[:, 1] > -W - TUBE_R - 1) & (H_[:, 1] < -WI + TUBE_R + 1)]
+        xs += list(sel[:, 0]); zs += list(sel[:, 2])
+    m = TUBE_R + CLR + 1.0
+    return dict(x=(min(xs) - m, max(xs) + m), z=(min(zs) - m, max(zs) + m))
+WIN = _window()
+NINE_X = (S2_X0, S2_X0 + NINE[0])                                # rear end wall sits in a notch of the nose-bay wall
 NINE_Y = [(BAT_SLOT[0] + CLR + 2.0, BAT_SLOT[0] + CLR + 2.0 + NINE[1]),
           (BAT_SLOT[0] + CLR + 2.0 + NINE[1] + 2 * CLR + 1.6, BAT_SLOT[0] + CLR + 2.0 + 2 * NINE[1] + 2 * CLR + 1.6)]
 
@@ -960,16 +1023,17 @@ def cavities():
 # ---------------- build + export ----------------
 PRINT1 = ('main_tub', 'front_shell')
 PRINT2 = ('tub_cap', 'shell_cap', 'batt_hatch', 'tank_hatch', 'tub_deck', 'tub_shelf', 'pump_deck')
-PRINT3 = ('lidar_mount', 'refill_arm', 'spacer_1', 'spacer_2', 'spacer_3', 'spacer_4')
+PRINT3 = ('lidar_mount', 'refill_arm', 'esp_carrier', 'spacer_1', 'spacer_2', 'spacer_3', 'spacer_4')
 BUILDERS = dict(main_tub=main_tub, front_shell=front_shell, tub_cap=tub_cap, shell_cap=shell_cap, batt_hatch=batt_hatch,
                 tank_hatch=tank_hatch, tub_deck=tub_deck, tub_shelf=tub_shelf, pump_deck=pump_deck, lidar_mount=lidar_mount,
-                refill_arm=lambda: arm_solid(ARM['stowed_deg'], with_strainer=False),
+                refill_arm=lambda: arm_solid(ARM['stowed_deg'], with_strainer=False), esp_carrier=lambda: esp_carrier(),
                 **{f'spacer_{i}': (lambda i=i: coupling_spacer().translate((XF if i <= 2 else XR, 0, 0))) for i in range(1, 5)})
 BODY_OF = dict(main_tub='tub', tub_cap='tub', tub_deck='tub', tub_shelf='tub', lidar_mount='tub',
                front_shell='shell', shell_cap='shell', batt_hatch='shell', tank_hatch='shell', pump_deck='shell', refill_arm='shell',
+               esp_carrier='shell',
                spacer_1='none', spacer_2='none', spacer_3='none', spacer_4='none')
 BED_FLIP = dict(tub_cap=180, shell_cap=180, batt_hatch=180, tank_hatch=180, tub_deck=0, tub_shelf=180, pump_deck=0, lidar_mount=0,
-                refill_arm=0, spacer_1=0, spacer_2=0, spacer_3=0, spacer_4=0)
+                refill_arm=0, esp_carrier=0, spacer_1=0, spacer_2=0, spacer_3=0, spacer_4=0)
 
 def summary():
     return dict(version='v3', XRO=XRO, NOSE=NOSE, H=H, TOP_T=H, TOP_S=H, Z_SPLIT=Z_SPLIT, length=round(NOSE - XRO, 1),

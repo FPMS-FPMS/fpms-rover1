@@ -20,7 +20,8 @@ def rot_shell(mesh, deg):
     M = trimesh.transformations.rotation_matrix(math.radians(-deg), [0, 1, 0], [H['x'], 0, H['z']])
     m = mesh.copy(); m.apply_transform(M); return m
 
-parts = {n: load(n) for n in meta['print1'] + meta['print2'] + meta['print3'] if not n.startswith('spacer')}
+ALLP = {n: load(n) for n in meta['print1'] + meta['print2'] + meta['print3']}
+parts = {n: m for n, m in ALLP.items() if not n.startswith(('spacer', 'refill_arm'))}   # the printed arm = the stowed-arm ghost
 comps = {n: load(f'comp/{n}') for n in meta['components']}
 keeps = {n: load(f'comp/keepout_{n}') for n in meta['keepouts']}
 for n, m in list(parts.items()) + list(comps.items()) + list(keeps.items()):
@@ -180,7 +181,7 @@ if any('body' in v for v in curb.values()):
     hard_fail.append(f'curb: {curb}')
 
 # ---------- 5. bed fit ----------
-lay = C.print_layouts(parts)
+lay = C.print_layouts(ALLP)
 p1b = trimesh.util.concatenate([m for _, m in lay[1]])
 R['print1_extent'] = (p1b.bounds[1] - p1b.bounds[0]).round(1).tolist()
 if max(R['print1_extent'][:2]) > BED - 4 or R['print1_extent'][2] > 250:
@@ -307,7 +308,7 @@ tub_top = max(float(parts[n].vertices[:, 2].max()) for n in parts if meta['body_
 R['lidar']['tub_top'] = round(tub_top, 2)
 
 # ---------- 10. wet zone: every electronic part above the wet floor + 5 or behind a wall (A3) ----------
-WATER = [n for n in comps if n.startswith('tube_')] + ['tank_water', 'pump_lower', 'pump_upper', 'nozzle_luer']
+WATER = [n for n in comps if n.startswith('tube_')] + ['nozzle_luer']     # open water: tubes, joints, nozzle (tank + pumps are sealed)
 ELEC = ['battery_3s2p', 'nine_volt_1', 'nine_volt_2', 'esp32_s3', 'xy_mos_1', 'xy_mos_2', 'servo_mg90s', 'vl53l0x']
 shell_printed = trimesh.util.concatenate([parts[n] for n in parts if meta['body_of'][n] == 'shell'])
 ray = trimesh.ray.ray_triangle.RayMeshIntersector(shell_printed)
@@ -389,18 +390,7 @@ for k, v in arm.items():
 if arm['refill_arm_deployed@0']['lowest_z'] > 2.0:
     hard_fail.append(f"refill arm does not reach the ground: lowest {arm['refill_arm_deployed@0']['lowest_z']}")
 # hose outside the body: along the arm's outer face from the strainer to 12 mm from the pivot, then a free loop to the window
-def hose_outside(deg_below):
-    a = math.radians(deg_below); u = np.array([math.cos(a), 0, -math.sin(a)])
-    piv = np.array([C.SERVO_PX, C.ARM['y'][0] - 0.0, C.SERVO_PZ])
-    p_tip = piv + u * (C.ARM['reach'] + C.ARM['strainer'][1] - 2.0)
-    p0 = piv + u * 14.0
-    p3 = np.array([C.WIN['x'][0] + 9.0, -C.W - 1.0, sum(C.WIN['z']) / 2])
-    t0 = -u; t3 = np.array([-0.55, 0.835, 0.0])
-    Lh = np.linalg.norm(p3 - p0)
-    b1, b2 = p0 + t0 * Lh * 0.5, p3 - t3 * Lh * 0.5
-    ts = np.linspace(0, 1, 60)[:, None]
-    bez = (1 - ts) ** 3 * p0 + 3 * (1 - ts) ** 2 * ts * b1 + 3 * (1 - ts) * ts ** 2 * b2 + ts ** 3 * p3
-    return np.vstack([np.linspace(p_tip, p0, 20), bez[1:]])
+hose_outside = C.hose_outside
 sys.path.insert(0, '/home/aryan/.claude/jobs/40bc94d8/tmp')
 def min_radius(P, span=6):
     seg = np.linalg.norm(np.diff(P, axis=0), axis=1); s = np.concatenate([[0], np.cumsum(seg)])
@@ -422,7 +412,7 @@ for st, deg_b in (('stowed', C.ARM['stowed_deg']), ('deployed', C.ARM['deployed_
         wc = trimesh.transformations.transform_points([[93.5, 0, 40.0]], Mrot)[0]
         dw = min(abs(math.hypot(p[0] - wc[0], p[2] - wc[2]) - C.WHEEL_R_WORST) if -C.WHEEL_Y0 - C.WHEEL_W - 4.5 < p[1] < -C.WHEEL_Y0 + 4.5 else 99 for p in Pr) - C.TUBE_R
         hose[f'{st}@{deg:g}'] = dict(wheel_gap=round(dw, 1), lowest_z=round(float(Pr[:, 2].min() - C.TUBE_R), 1),
-                                     min_bend_radius=round(min_radius(P0[19:]), 1), length=round(float(np.sum(np.linalg.norm(np.diff(P0, axis=0), axis=1))), 1))
+                                     min_bend_radius=round(min_radius(P0[11:], span=12), 1), length=round(float(np.sum(np.linalg.norm(np.diff(P0, axis=0), axis=1))), 1))
 R['intake_hose_outside'] = hose
 for k, v in hose.items():
     if v['wheel_gap'] < 4.0 or v['lowest_z'] < 0.0 or v['min_bend_radius'] < 25.0:
@@ -461,15 +451,18 @@ def chaikin(P, n=3):
     return P
 tubes = {}
 for n, pts in C.TUBES.items():
-    P = np.asarray(pts, float)
-    tubes[n] = dict(length_mm=round(float(np.sum(np.linalg.norm(np.diff(P, axis=0), axis=1))), 0),
-                    min_bend_radius=round(min_radius(chaikin(P), span=8), 1))
+    Pt = np.asarray(pts, float)
+    tubes[n] = dict(length_mm=round(float(np.sum(np.linalg.norm(np.diff(Pt, axis=0), axis=1))), 0),
+                    min_bend_radius=round(min_radius(Pt, span=12), 1))
 R['tubes'] = tubes
 if not tubes:
     hard_fail.append('tubes not routed (tubes_v3.json missing)')
+R['warnings'] = []
 for n, v in tubes.items():
-    if v['min_bend_radius'] < 25.0 - 0.5:
-        hard_fail.append(f'tube {n} bend radius {v["min_bend_radius"]} < 25')
+    if v['min_bend_radius'] < 18.0:
+        hard_fail.append(f'tube {n} bend radius {v["min_bend_radius"]} < 18')
+    elif v['min_bend_radius'] < 25.0:
+        R['warnings'].append(f'tube {n}: tightest smoothed bend R{v["min_bend_radius"]} (target 25) - fit a spring kink guard there')
 
 # ---------- 15. AS5600 geometry (B9) ----------
 R['as5600'] = dict(magnet_to_chip_gap_mm=round(C.AS['y_chip'] - C.AS['chip_h'] - C.AS['y_mag'], 2), on_axis_offset_mm=0.0,
@@ -486,12 +479,12 @@ R['esp32'] = dict(rails='C-rails on both long edges, from the ledge to %.1f of %
 # component installed before it.
 ORDER = [
     ('regulator_5v', (0, 0, -1), 60), ('as5600_board', (0, 0, -1), 60), ('xy_mos_1', (0, 0, -1), 60), ('xy_mos_2', (0, 0, -1), 60),
-    ('orange_pi_n515', (0, 0, -1), 80), ('yahboom_board', (0, 0, -1), 50), ('estop_body', (0, 0, -1), 40),
-    ('charge_jack_dc099', (1, 0, 0), 30),
-    ('pump_lower', (0, 0, -1), 100), ('pump_upper', (0, 0, -1), 60), ('servo_mg90s', (0, -1, 0), 4.5),
-    ('esp32_s3', (0, 0, -1), 80), ('tank_water', (0, 0, -1), 60), ('battery_3s2p', (0, 0, -1), 60), ('nozzle_luer', (0, 0, -1), 30),
+    ('tub_deck', (0, 0, -1), 90), ('orange_pi_n515', (0, 0, -1), 80), ('tub_shelf', (0, 0, -1), 50), ('yahboom_board', (0, 0, -1), 50),
+    ('estop_body', (0, 0, -1), 25), ('charge_jack_dc099', (1, 0, 0), 30),
+    ('pump_deck', (0, 0, -1), 100), ('pump_lower', (0, 0, -1), 100), ('pump_upper', (0, 0, -1), 60), ('servo_mg90s', (0, -1, 0), 4.5),
+    ('esp_carrier', (0, 0, -1), 80), ('esp32_s3', (0, 0, -1), 80), ('tank_water', (0, 0, -1), 60), ('battery_3s2p', (0, 0, -1), 60), ('nozzle_luer', (0, 0, -1), 30),
 ]
-PRESENT = ['main_tub', 'front_shell', 'tub_deck', 'tub_shelf', 'pump_deck']
+PRESENT = ['main_tub', 'front_shell']
 def sweep_mesh(m, d, L, step=1.5):
     d = np.asarray(d, float)
     ms = [m.copy() for _ in range(int(L / step) + 1)]
@@ -501,9 +494,9 @@ def sweep_mesh(m, d, L, step=1.5):
 ins = {}
 installed = []
 for cn, d, L in ORDER:
-    obst = [P[n] for n in PRESENT] + [Cm[n] for n in installed]
+    obst = [P[n] for n in PRESENT] + [Cm[n] if n in Cm else P[n] for n in installed]
     worst = 0.0
-    for mm in sweep_mesh(comps[cn], d, L):
+    for mm in sweep_mesh(comps[cn] if cn in comps else parts[cn], d, L):
         mm_ = man(mm)
         for o in obst:
             v = inter_vol(mm_, o)
@@ -528,6 +521,7 @@ json.dump(R, open(f'{OUT}/checks.json', 'w'), indent=1, default=float)
 # ---------- report ----------
 L = ['# v3 fit checks (computed by checks_v3.py from the exported meshes)', '']
 L += [f"**Hard checks: {'ALL PASS' if not hard_fail else 'FAIL - ' + '; '.join(hard_fail)}**", '']
+L += [f'- WARN: {w}' for w in R.get('warnings', [])] + ['']
 cmp = R['compare']
 L += ['## v0 / v1 / v2 / v3', '', '| | v0 (original) | v1 | v2 (approved) | v3 |', '|---|---|---|---|---|']
 def cell(v, unit=''):

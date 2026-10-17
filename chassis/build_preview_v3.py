@@ -74,15 +74,7 @@ def tube_mesh(P, r=4.5):
         c = trimesh.creation.cylinder(radius=r, height=L, sections=12)
         c.apply_transform(trimesh.geometry.align_vectors([0, 0, 1], (b - a) / L)); c.apply_translation((a + b) / 2); out.append(c)
     return trimesh.util.concatenate(out)
-def hose_outside(deg_below):
-    a = math.radians(deg_below); u = np.array([math.cos(a), 0, -math.sin(a)])
-    piv = np.array([C.SERVO_PX, C.ARM['y'][0], C.SERVO_PZ])
-    p_tip = piv + u * (C.ARM['reach'] + C.ARM['strainer'][1] - 2.0); p0 = piv + u * 14.0
-    p3 = np.array([C.WIN['x'][0] + 9.0, -C.W - 1.0, sum(C.WIN['z']) / 2]); t0 = -u; t3 = np.array([-0.55, 0.835, 0.0])
-    Lh = np.linalg.norm(p3 - p0); b1, b2 = p0 + t0 * Lh * 0.5, p3 - t3 * Lh * 0.5
-    ts = np.linspace(0, 1, 30)[:, None]
-    bez = (1 - ts) ** 3 * p0 + 3 * (1 - ts) ** 2 * ts * b1 + 3 * (1 - ts) * ts ** 2 * b2 + ts ** 3 * p3
-    return np.vstack([np.linspace(p_tip, p0, 8), bez[1:]])
+hose_outside = C.hose_outside
 add_extra('intake hose outside (arm stowed)', 'arm_stowed', 'shell', '#00a8ff', 0.6, tube_mesh(hose_outside(C.ARM['stowed_deg'])))
 add_extra('intake hose outside (arm deployed)', 'arm_deployed', 'shell', '#00a8ff', 0.6, tube_mesh(hose_outside(C.ARM['deployed_deg'])))
 for n, d in meta['keepouts'].items():
