@@ -1,9 +1,12 @@
-# FPMS Rover 1 chassis - CadQuery source, v1 (single file).
+# FPMS Rover 1 chassis - CadQuery source, v2 (single file).
 # Frame: X forward (rear axle at X=0), Y left, Z up, mm. Ground at Z=0.
 # Print 1 = main tub + front shell printed ASSEMBLED, hinge printed in place (0.4 mm, teardrop bores).
-# Print 2 = lids + removable decks + LiDAR mount (+ tank hatch).
+# Print 2 = the two caps (rounded top 8 mm of each body) + tank hatch + removable decks + board shelf + LiDAR plate.
 # Sources for every part dimension: RESEARCH.md. Team measurements win over online numbers.
-# Run:  pip install cadquery trimesh manifold3d shapely   then   python fpms_rover1_cad.py
+# Run:  pip install cadquery trimesh manifold3d shapely   then   python fpms_rover1_cad.py [--prints]
+#
+# v2 (Nikhil's review of v1): <= 210 long, nose <= 20 past the worst-case wheel with a 45 deg underside from behind
+# the wheel, 0.45 per side in every pocket, nothing outside the body outline, equal tops, R8 rounds, no add-on boxes.
 import math, os, json
 import cadquery as cq
 from shapely.geometry import Polygon, Point, box as sbox
@@ -21,7 +24,9 @@ GAP = 0.4                          # print-in-place clearance everywhere in the 
 J_TUB, J_SH = XH - GAP / 2, XH + GAP / 2
 RAKE = 20.0                        # tub front face leans back 20 deg: the shell's rear face lands on it = 20 deg stop
 TANR = math.tan(math.radians(RAKE)); TIN = T / math.cos(math.radians(RAKE))
-SWEEP = (-2.0, 21.0)               # hinge range the clearance cuts are swept over (stops land at ~-1.6 and ~20.3)
+SWEEP = (-2.0, 21.0)               # hinge range the clearance cuts are swept over (stops land at ~-1.75 and ~20.3)
+WHEEL_R_WORST = 86.6 / 2           # Yahboom drawing (team: 80, still to caliper) - every outline check uses the bigger one
+WHEEL_FRONT = XF + WHEEL_R_WORST   # 136.8
 
 def tub_face_x(z):                 # outer joint face of the tub
     return J_TUB - max(0.0, z - ZH) * TANR
@@ -34,8 +39,8 @@ M_CAN_R = 16.4                     # can Ø32.8
 M_LEN = 62.0                       # face -> back of PH2.0 plug (team)
 M_FACE = 68.0                      # gearbox face sits on the pad's inner face at |y| 68 -> plug ends at |y| 6 (12 mm cable gap)
 PAD = W - M_FACE                   # 6 mm pad = boss length, boss ends flush outside
-CLR = 0.5                          # every holder: component + 0.5 per side
-DECK_Z0, DECK_Z1 = 66.0, 68.4      # removable decks just over the gearboxes (top Z 65.5)
+CLR = 0.45                         # every pocket: component + 0.45 per side (PETG pockets print undersize)
+DECK_Z0, DECK_Z1 = 66.0, 68.4      # deck level just over the gearboxes (top Z 65.5)
 
 # hole pattern on the gearbox face (RESEARCH.md): Ø31 about the GEARBOX centre, holes at ±30/±90/±150 deg
 # from the shaft direction (shaft is below the centre), assembly screws at 180 and ±60 deg.
@@ -44,72 +49,77 @@ def face_pts(angles, r=15.5):
 M3_ANG = (30, -30, 90, -90, 150, -150)
 ASM_ANG = (180, 60, -60)
 
-# ---------------- layout ----------------
-OPI = (65.0, 92.8, 35.8); OPI_PLUG, OPI_AIR = 40.0, 10.0
-BOARD = (56.0, 85.0, 20.0)         # Yahboom V3.0, components up, hanging from the tub lid on 4 standoffs
-OPI_Z0 = DECK_Z1
-OPI_Z1 = OPI_Z0 + OPI[2]
-BOARD_Z0 = OPI_Z1 + CLR + OPI_AIR  # Pi fan gets its 10 mm of air under the board
-BOARD_Z1 = BOARD_Z0 + BOARD[2]
-TOP_T = math.ceil(BOARD_Z1 + CLR)  # tub rim = lid underside
-SHIFT_Y = 5.6                      # Pi + board moved off the right wall so the right rear corner can be rounded
-OPI_X1 = tub_face_in(OPI_Z1) - CLR; OPI_X0 = OPI_X1 - OPI[0]
-OPI_Y0 = -WI + CLR + SHIFT_Y;       OPI_Y1 = OPI_Y0 + OPI[1]
-BOARD_X1 = tub_face_in(BOARD_Z1) - CLR; BOARD_X0 = BOARD_X1 - BOARD[0]
-XRI = min(OPI_X0, BOARD_X0) - CLR   # tub rear wall inner face
-XRO = math.floor(XRI - T)           # tub rear outer face
-XRI = XRO + T
-ESTOP = dict(y=(24.0, 64.0), z=(OPI_Z1 + 0.8, OPI_Z1 + 30.8), depth=45.0, head_r=20.0, head_h=22.0)
-REG = dict(x=(22.0, 31.5), y=(42.0, 67.4), z=(FLOOR, FLOOR + 25.4))
-BOARD_Y1 = ESTOP['y'][0] - CLR - 3.0; BOARD_Y0 = BOARD_Y1 - BOARD[1]   # connectors toward +Y (the cable riser)
-PCB_Z = BOARD_Z0 + 2.0              # 2 mm of solder pins under the PCB, components above
-# board holes: 58 x 49 pattern, 23.5 in from the connector edge, 3.5 from the others
-BOARD_HOLES = [(BOARD_X0 + 3.5 + i * 49.0, y) for i in (0, 1) for y in (BOARD_Y1 - 23.5, BOARD_Y1 - 81.5)]
-TAIL_X = -22.0                      # tub belly rises 45 deg behind the rear motors (departure angle, no dead corner)
-
-# front shell
-PUMP = (40.0, 100.0, 50.0)          # X, Y (barbs at +Y end), Z
+# ---------------- front shell layout ----------------
+# The nose may only reach 20 past the worst-case wheel and its underside rises at 45 deg from behind the wheel,
+# so nothing big can stand on a floor ahead of the front motors any more. Everything stands at deck level:
+#   rear half (over the front motors): the two pumps STACKED, barbs at opposite ends so each bend zone sits
+#   beside the other pump;  front half (nose bay): battery, tank, 9 V cells, ESP32, standing on printed ribs.
+PUMP = (50.0, 100.0, 40.0)          # lying: 50 deep (X), 100 across (Y, barbs at one end), 40 tall
 BEND = 30.0                         # 6x9 silicone, R25 bend + tube radius beyond the barb tip
-P1_X0 = J_SH + T + CLR              # pump 1 against the shell's rear wall
-P1_X1 = P1_X0 + PUMP[0]
-DIV = 1.6
-P2_X0 = P1_X1 + CLR + DIV + CLR
-P2_X1 = P2_X0 + PUMP[0]
-S2_X0 = P2_X1 + CLR + DIV          # nose bay (battery, tank, 9V, ESP32) starts behind its own divider
-S2_FLOOR = 38.4                     # nose bay floor raised 10 mm: steps up to ~35 mm meet the wheel first
-BATT = (50.0, 65.0, 75.0)           # 65x75x50 pack standing, 50 deep so the nose stays short
+P_X0 = J_SH + T + CLR
+P_X1 = P_X0 + PUMP[0]
+P_Z = (DECK_Z1, DECK_Z1 + PUMP[2], DECK_Z1 + 2 * PUMP[2])   # lower pump on the pump deck, upper pump on the lower one
+DIV = 1.2
+S2_X0 = P_X1 + CLR + DIV            # nose bay starts behind its divider
+BATT = (50.0, 65.0, 75.0)           # 65x75x50 pack standing, 50 deep
 TANK = (40.0, 40.0, 80.0)
-NINE = (48.5, 17.5, 26.5)           # 9 V Li-ion lying, two stacked
-ESP = (25.4, 13.0, 69.0)            # ESP32-S3 DevKitC-1 standing, USB up (antenna overhang included)
-DIV_S2 = 1.2
-S2_DEPTH = BATT[0] + 2 * CLR
-NOSE_I = S2_X0 + S2_DEPTH
+TANK_Z0 = DECK_Z0                   # tank on the ribs like the battery (the R6 side round clears it)
+PUMP_UP_SHIFT = 4.5                 # upper pump moved off the left wall for the same reason (its bend zone still fits)
+NINE = (48.5, 17.5, 26.5)           # 9 V Li-ion lying along X, two stacked
+ESP = (25.4, 13.0, 68.8)            # ESP32-S3 DevKitC-1 standing, USB up: 62.74 PCB + ~6 antenna overhang
+SERVO = dict(body=(22.8, 12.2, 28.5), ears=32.0, ear_z=18.6, shaft_from_front=5.9)
+NOSE_I = S2_X0 + CLR + BATT[0] + CLR
 NOSE = NOSE_I + T
-TOP_S = math.ceil(max(DECK_Z1 + PUMP[2], S2_FLOOR + TANK[2]) + CLR)
-RAMP_X0 = 124.0                     # belly 26 -> 36 at 45 deg under the front pocket
-# nose bay slots across Y, right (-Y) to left: ESP32 | battery | 9V | tank
-_y = -WI
-ESP_SLOT = (_y, _y + ESP[1] + 2 * CLR); _y = ESP_SLOT[1] + DIV_S2
-BAT_SLOT = (_y, _y + BATT[1] + 2 * CLR); _y = BAT_SLOT[1] + DIV_S2
-NINE_SLOT = (_y, _y + NINE[1] + 2 * CLR); _y = NINE_SLOT[1] + DIV_S2
+RAMP_X0 = 119.0                     # 45 deg rise starts 14.5 behind the Ø80 wheel front: belly is above the axle by X 133.5,
+                                    # so a curb meets the wheel first with either wheel (checked in checks.py)
+_y = -WI                            # nose bay slots across Y, right (-Y) to left
+ESP_OFF = 0.4                       # ESP32 stands 0.85 off the wall: its top corner clears the cap's side round
+ESP_SLOT = (_y, _y + ESP[1] + 2 * CLR + ESP_OFF); _y = ESP_SLOT[1] + DIV
+BAT_SLOT = (_y, _y + BATT[1] + 2 * CLR); _y = BAT_SLOT[1] + DIV
+NINE_SLOT = (_y, _y + NINE[1] + 2 * CLR); _y = NINE_SLOT[1] + DIV
 TANK_SLOT = (_y, WI)
 assert TANK_SLOT[1] - TANK_SLOT[0] >= TANK[1] + 2 * CLR - 1e-6, ('nose bay too narrow', TANK_SLOT)
+H_IN = max(P_Z[2], TANK_Z0 + TANK[2], DECK_Z0 + BATT[2]) + CLR      # inside of both caps
+H = math.ceil((H_IN + T) * 2) / 2                                    # one top line for tub and shell
+H_IN = H - T
+CAP = 8.0                           # the rounded top 8 mm of each body is a separate cap (print 2)
+Z_SPLIT = H - CAP
+R_V, R_TOP, R_BELLY = 8.0, 8.0, 4.0 # outside vertical edges, front/rear top edges, belly edges (belly: outside only)
+R_TOP_SIDE = 6.0                    # long top edges: R6 keeps the pump and ESP32 ends clear of the round
+R_JOINT = 6.0                       # vertical edges at the joint faces
+# servo: inside the right front corner, shaft up near its front end so the refill arm swings out ahead of the wheel
+NOSE_SLOPE_IN = lambda x: x - RAMP_X0 + BELLY + T * math.sqrt(2)    # inner surface height of the 45 deg nose slope
+ESP_X1 = None                                                        # set below once the nose bay is known
+PAD_HALF = 19.5                                                      # motor pad: 1 mm of wall round the outer counterbores
 
-LIDAR = dict(fp=(54.0, 46.29), h=34.8, scan=27.0, holes=(46.8, 31.92), cx=None, cy=0.0, plate=4.0)
-LID_T = 2.4
-# removable decks carry only what sits on them (print 2 has to fit one P1S bed)
-TUB_DECK_X1 = OPI_X1 + CLR + 1.6 + 3.0
-TUB_DECK_Y1 = OPI_Y1 + 1.5
-SH_DECK_Y1 = -WI + CLR + PUMP[1] + CLR + 2.0
-XYMOS_X, XYMOS_Y = (110.6, 122.6), (-27.5, 27.5)   # inner belly ramp starts at X 123.0
-SERVO_CX, SERVO_Z0 = NOSE - 20.0, BELLY + 24.0
-TUBE_Z = 92.0                       # straight tube run along the left wall, above the bend zones' reach
-# D500 on a small plate fixed through the two board standoffs nearest the centreline -> LiDAR centred on the tub
-LIDAR_HOLE_Y = BOARD_Y1 - 23.5
-LIDAR['cx'] = round(BOARD_X0 + 3.5 + 24.5, 2)           # rotation axis between those standoffs, on Y = 0
-# D500 holes: pair 46.8 apart along X, third 31.92 to the left of the pair; rotation axis 8.7 from the pair, on Y = 0
-LIDAR_HOLES = [(LIDAR['cx'] - 23.4, -8.7), (LIDAR['cx'] + 23.4, -8.7), (LIDAR['cx'], -8.7 + 31.92)]
-LIDAR_LEAD = (-1.0, 9.0, 22.0, 32.0)                    # cable slot in the lid: over the open column ahead of the E-stop
+# ---------------- main tub layout ----------------
+OPI = (65.0, 92.8, 35.8); OPI_PLUG, OPI_AIR = 40.0, 10.0
+BOARD = (56.0, 85.0, 20.0)          # Yahboom V3.0 flat on its own removable shelf above the Pi
+OPI_Z0 = DECK_Z1
+OPI_Z1 = OPI_Z0 + OPI[2]
+SHELF_T, STANDOFF = 2.4, 2.0
+SHELF_Z0 = OPI_Z1 + CLR + OPI_AIR   # Pi fan gets 10 mm of air under the shelf (shelf is open over the fan)
+SHELF_Z1 = SHELF_Z0 + SHELF_T
+BOARD_Z0 = SHELF_Z1 + STANDOFF
+BOARD_Z1 = BOARD_Z0 + BOARD[2]
+SHIFT_Y = 5.6                       # Pi + board moved off the right wall so the right rear corner can be rounded
+ESTOP = dict(y=(24.0, 64.0), z=(OPI_Z1 + 0.8, OPI_Z1 + 30.8), depth=45.0, head_r=20.0, head_h=22.0)
+OPI_X1 = tub_face_in(OPI_Z1 + CLR) - CLR; OPI_X0 = OPI_X1 - OPI[0]
+OPI_Y0 = -WI + CLR + SHIFT_Y;       OPI_Y1 = OPI_Y0 + OPI[1]
+BOARD_X1 = tub_face_in(BOARD_Z1 + CLR) - CLR; BOARD_X0 = BOARD_X1 - BOARD[0]
+BOARD_Y1 = ESTOP['y'][0] - CLR - 3.0; BOARD_Y0 = BOARD_Y1 - BOARD[1]   # connectors (+3) toward +Y, the cable riser
+BOARD_HOLES = [(BOARD_X0 + 3.5 + i * 49.0, y) for i in (0, 1) for y in (BOARD_Y1 - 23.5, BOARD_Y1 - 81.5)]
+XRI = min(OPI_X0, BOARD_X0) - CLR   # tub rear wall inner face
+XRO = math.floor(XRI - T)
+XRI = XRO + T
+REG = dict(x=(22.0, 31.5), y=(42.0, 67.4), z=(FLOOR, FLOOR + 25.4))
+TAIL_X = -22.0                      # tub belly rises 45 deg behind the rear motors
+XYMOS_X, XYMOS_Y = (62.5, 74.5), (-27.5, 27.5)                   # standing in the shell bay behind the front motors
+LIDAR = dict(fp=(46.29, 54.0), h=34.8, scan=27.0, holes=(46.8, 31.92), plate=4.0)
+LIDAR['cx'] = round((XRO + R_TOP + tub_face_x(H) - R_TOP) / 2, 1)   # middle of the flat part of the tub cap
+LIDAR_HOLES = [(LIDAR['cx'] - 8.7, -23.4), (LIDAR['cx'] - 8.7, 23.4), (LIDAR['cx'] + 23.2, 0.0)]
+LIDAR_PADS = [(LIDAR['cx'] + dx, dy) for dx in (-15.0, 15.0) for dy in (-17.0, 17.0)]
+LIDAR_LEAD = (LIDAR['cx'] - 6, LIDAR['cx'] + 6, -6, 6)
 
 # ---------------- helpers ----------------
 def bx(x0, x1, y0, y1, z0, z1):
@@ -138,20 +148,21 @@ def ring(coords):                   # drop repeated / near-duplicate vertices (O
     while len(out) > 2 and abs(out[0][0] - out[-1][0]) + abs(out[0][1] - out[-1][1]) <= 1e-3:
         out.pop()
     return out
-def prism_y(g, y0, y1):             # shapely XZ region -> solid between y0 and y1
+def _prism(plane, g, a, b, shift):
     out = None
     for p in polys(g):
-        s = cq.Workplane('XZ').polyline(ring(p.exterior.coords)).close().extrude(-(y1 - y0)).translate((0, y0, 0))
+        s = cq.Workplane(plane).polyline(ring(p.exterior.coords)).close().extrude(b)
         for h in p.interiors:
-            s = s.cut(cq.Workplane('XZ').polyline(ring(h.coords)).close().extrude(-(y1 - y0)).translate((0, y0, 0)))
+            s = s.cut(cq.Workplane(plane).polyline(ring(h.coords)).close().extrude(b))
+        s = s.translate(shift(a))
         out = s if out is None else out.union(s)
     return out
+def prism_y(g, y0, y1):             # shapely XZ region -> solid between y0 and y1
+    return _prism('XZ', g, y0, -(y1 - y0), lambda a: (0, a, 0))
 def prism_z(g, z0, z1):             # shapely XY region -> solid between z0 and z1
-    out = None
-    for p in polys(g):
-        s = cq.Workplane('XY').polyline(ring(p.exterior.coords)).close().extrude(z1 - z0).translate((0, 0, z0))
-        out = s if out is None else out.union(s)
-    return out
+    return _prism('XY', g, z0, z1 - z0, lambda a: (0, 0, a))
+def prism_x(g, x0, x1):             # shapely YZ region -> solid between x0 and x1
+    return _prism('YZ', g, x0, x1 - x0, lambda a: (a, 0, 0))
 def teardrop_y(x, z, r, y0, y1):
     return prism_y(teardrop2d(x, z, r), y0, y1)
 def rrect(x0, x1, y0, y1, rads):    # rounded rectangle, rads = (x0y0, x1y0, x1y1, x0y1) corner radii
@@ -166,19 +177,21 @@ def rrect(x0, x1, y0, y1, rads):    # rounded rectangle, rads = (x0y0, x1y0, x1y
             a = math.radians(a0 + 90 * k / 12)
             out.append((ox + r * math.cos(a), oy + r * math.sin(a)))
     return Polygon(out)
+def round_convex(p, r, keep):
+    """round the convex corners of polygon p with radius r, only inside the shapely region `keep`"""
+    rp = p.buffer(-r, join_style=1).buffer(r, join_style=1, quad_segs=12)
+    return unary_union([rp.intersection(keep), p.difference(keep)]).buffer(0)
 def rot2d(g, deg):
     return affinity.rotate(g, deg, origin=(XH, ZH))
 def sweep2d(g, sign):               # union of g rotated over the hinge range (sign +1: shell's motion seen from the tub)
     angs = [SWEEP[0] + i * 0.5 for i in range(int((SWEEP[1] - SWEEP[0]) / 0.5) + 1)]
     return unary_union([rot2d(g, sign * a) for a in angs])
 def ledge(x0, x1, y0, y1, ztop, d=3.0, axis='y', into=+1):
-    """deck ledge: 3 mm flat top, 45 deg gusset under it so it prints without support.
-    axis: the wall normal ('y' for side walls, 'x' for end walls); into: direction from the wall into the bay."""
+    """deck ledge: 3 mm flat top, 45 deg gusset under it so it prints without support."""
     if axis == 'y':
-        wy = y1 if into < 0 else y0          # wall side
+        wy = y1 if into < 0 else y0
         prof = Polygon([(wy, ztop), (wy + into * d, ztop), (wy + into * d, ztop - 0.8), (wy, ztop - 0.8 - d)])
-        pts = list(prof.exterior.coords)[:-1]
-        return cq.Workplane('YZ').polyline(pts).close().extrude(x1 - x0).translate((x0, 0, 0))
+        return prism_x(prof, x0, x1)
     wx = x1 if into < 0 else x0
     prof = Polygon([(wx, ztop), (wx + into * d, ztop), (wx + into * d, ztop - 0.8), (wx, ztop - 0.8 - d)])
     return prism_y(prof, y0, y1)
@@ -188,7 +201,7 @@ def try_fillet(w, sel, r):
     except Exception as e:
         print('  fillet skipped', sel, r, e.__class__.__name__); return w
 
-# ---------------- hinge (all profiles in the XZ plane, extruded along Y) ----------------
+# ---------------- hinge (all profiles in the XZ plane, extruded along Y) - unchanged from v1 ----------------
 PIN_R, CUP_R, KN_R = 5.0, 12.5, 11.5          # >= 3.9 mm of wall round every bore
 CUPS_Y = [(30.0, 42.0), (62.0, W)]          # tub cups, pin fused, both sides (mirrored)
 KN_Y = (42.0 + GAP, 62.0 - GAP)              # shell knuckle between them
@@ -212,32 +225,38 @@ def shell_cup_pocket2d():
 def tub_knuckle_pocket2d():
     return unary_union([sweep2d(knuckle2d().buffer(GAP, 32), +1), cap_up(KN_R + GAP)])
 
-# ---------------- bodies ----------------
-def tub_profile(top=TOP_T):
-    return Polygon([(XRO, top), (XRO, BELLY + (TAIL_X - XRO)), (TAIL_X, BELLY), (J_TUB, BELLY), (J_TUB, ZH),
-                    (tub_face_x(top), top)])
-def shell_profile(top=TOP_S, chamfer=3.0):  # chamfer only on the outside: inside stays square for the battery
-    return Polygon([(J_SH, BELLY), (RAMP_X0, BELLY), (RAMP_X0 + 10, BELLY + 10), (NOSE - chamfer, BELLY + 10),
-                    (NOSE, BELLY + 10 + chamfer), (NOSE, top), (J_SH, top)])
-R_TUB = (11.4, 3.0, 3.0, 10.0)              # rear-right, front-right, front-left, rear-left plan radii
-R_SH = (3.0, 12.0, 12.0, 3.0)
-def hollow(profile, top, plan_out, plan_in, y_half=W, profile_tall=None):
-    outer = prism_y(profile, -y_half, y_half).intersect(prism_z(plan_out, 0, 300))
-    # open top: offset a copy of the profile that continues 20 mm above the rim ALONG its own faces
-    # (stretching the top vertically would cut through the raked wall)
-    inner2d = profile_tall.buffer(-T, join_style=2)
-    inner = prism_y(inner2d, -(y_half - T), y_half - T).intersect(prism_z(plan_in, 0, 300))
-    return outer, outer.cut(inner), inner
+# ---------------- bodies: three rounded profiles intersected, hollowed, top 8 mm split off as the cap ----------------
+def tub_profile():
+    p = Polygon([(XRO, H), (XRO, BELLY + (TAIL_X - XRO)), (TAIL_X, BELLY), (J_TUB, BELLY), (J_TUB, ZH), (tub_face_x(H), H)])
+    return round_convex(p, R_TOP, sbox(-300, 0, 30, 400))           # every corner except the hinge region
+def shell_profile():
+    p = Polygon([(J_SH, BELLY), (RAMP_X0, BELLY), (NOSE, BELLY + (NOSE - RAMP_X0)), (NOSE, H), (J_SH, H)])
+    return round_convex(p, R_TOP, sbox(70, 0, 400, 400))
+def yz_profile():
+    return rrect(-W, W, BELLY, H, (R_BELLY, R_BELLY, R_TOP_SIDE, R_TOP_SIDE))
+def yz_inner():
+    return rrect(-WI, WI, FLOOR, H_IN, (0, 0, R_TOP_SIDE - T, R_TOP_SIDE - T))
+def body(xz, plan_o, plan_i):
+    outer = prism_y(xz, -W - 1, W + 1).intersect(prism_z(plan_o, 0, 400)).intersect(prism_x(yz_profile(), -200, 400))
+    inner = prism_y(xz.buffer(-T, join_style=2), -W, W).intersect(prism_z(plan_i, 0, 400)).intersect(prism_x(yz_inner(), -200, 400))
+    return outer, inner
+def tub_plans():
+    return (rrect(XRO, J_TUB, -W, W, (R_V, R_JOINT, R_JOINT, R_V)),
+            rrect(XRI, J_TUB + 5, -WI, WI, (R_V - T, 0, 0, R_V - T)))
+def shell_plans():
+    return (rrect(J_SH, NOSE, -W, W, (R_JOINT, R_V, R_V, R_JOINT)),
+            rrect(J_SH - 5, NOSE_I, -WI, WI, (0, R_V - T, R_V - T, 0)))
+BELOW = lambda: bx(-300, 400, -200, 200, -10, Z_SPLIT)
+ABOVE = lambda: bx(-300, 400, -200, 200, Z_SPLIT, 400)
 
-def motor_mount(w, xa, label):
-    """JGB37-520 bolted through the side wall: Ø12.5 boss hole, 6 x M3 counterbored flush,
+def motor_mount(w, xa):
+    """JGB37-520 bolted through the side wall: Ø12.9 boss hole, 6 x M3 counterbored flush,
     assembly-screw reliefs, cradle under gearbox + can, zip-tie tunnel at the encoder end."""
     for s in (1, -1):
-        y_in, y_out = s * M_FACE, s * W
-        ylo, yhi = sorted((y_in, s * WI))
-        w = w.union(bx(xa - 21, xa + 21, ylo, yhi, FLOOR - 0.5, DECK_Z0))                                    # pad
+        ylo, yhi = sorted((s * M_FACE, s * WI))
+        w = w.union(bx(xa - PAD_HALF, xa + PAD_HALF, ylo, yhi, FLOOR - 0.5, DECK_Z0))                        # pad
         a, b = sorted((s * (M_FACE - 1), s * (W + 1)))
-        w = w.cut(teardrop_y(xa, ZH, 12.5 / 2, a, b))                                                         # boss locates
+        w = w.cut(teardrop_y(xa, ZH, 6.0 + CLR, a, b))                                                        # boss locates
         for (dx, dz) in face_pts(M3_ANG):
             w = w.cut(teardrop_y(xa + dx, ZGB + dz, 3.4 / 2, a, b))
             c0, c1 = sorted((s * (W - 3.4), s * (W + 1)))
@@ -245,7 +264,6 @@ def motor_mount(w, xa, label):
         for (dx, dz) in face_pts(ASM_ANG):
             r0, r1 = sorted((s * (M_FACE - 1), s * (M_FACE + 1.2)))
             w = w.cut(teardrop_y(xa + dx, ZGB + dz, 3.0, r0, r1))                                             # relief for proud screw heads
-        # cradles
         g0, g1 = sorted((s * (M_FACE - M_GB_L + 1.0), s * (M_FACE - 1.5)))
         w = w.union(bx(xa - 15, xa + 15, g0, g1, FLOOR - 0.5, 43).cut(cyl_y(xa, ZGB, M_GB_R + CLR, -100, 100)))
         c0, c1 = sorted((s * 26.0, s * (M_FACE - M_GB_L - 1.0)))
@@ -265,59 +283,71 @@ def channel(w, x0, x1):                      # cable channel on the centreline: 
         w = w.union(bx(x0, x1, a, b, FLOOR - 0.5, FLOOR + 6))
     return w
 
-def rim_boss(w, x, y_wall, top, along='x', into=+1, size=(8.0, 5.0)):
-    """lid screw boss hanging just under the rim, 45 deg gusset beneath (prints without support), M3 pilot Ø2.6.
-    along: the wall runs along this axis; y_wall: wall inner face coordinate; into: direction into the bay"""
-    L, D = size
+def cap_boss(w, x, y_wall, into, along='x'):
+    """cap screw column on a wall: rises from a 45 deg gusset up to the cap's underside (M3 pilot Ø2.6)"""
+    L, D, z0 = 7.0, 6.0, Z_SPLIT - 9.0
+    prof = Polygon([(y_wall, H_IN), (y_wall + into * D, H_IN), (y_wall + into * D, z0), (y_wall, z0 - D)])
     if along == 'x':
-        prof = Polygon([(y_wall, top), (y_wall + into * D, top), (y_wall + into * D, top - 6), (y_wall, top - 6 - D)])
-        g = cq.Workplane('YZ').polyline(ring(list(prof.exterior.coords))).close().extrude(L).translate((x - L / 2, 0, 0))
-        hx, hy = x, y_wall + into * D / 2
+        g = prism_x(prof, x - L / 2, x + L / 2); hx, hy = x, y_wall + into * D / 2
     else:
-        prof = Polygon([(y_wall, top), (y_wall + into * D, top), (y_wall + into * D, top - 6), (y_wall, top - 6 - D)])
-        g = prism_y(prof, x - L / 2, x + L / 2)
-        hx, hy = y_wall + into * D / 2, x
-    return w.union(g).cut(cyl_z(hx, hy, 1.3, top - 9, top + 1)), (hx, hy)
+        g = prism_y(prof, x - L / 2, x + L / 2); hx, hy = y_wall + into * D / 2, x
+    return w.union(g).cut(cyl_z(hx, hy, 1.3, H_IN - 10, H_IN + 1)), (hx, hy)
 
 TUB_BOSSES, SHELL_BOSSES = [], []
+CABLE_PASS = Polygon([(-10, 33), (10, 33), (10, 47), (0, 57), (-10, 47)])   # YZ: 20 wide, 45 deg pointed roof
 
 def deck_post(w, x, y, ztop, floor_z=FLOOR):
-    """printed column the removable deck rests on (5 x 5, locating peg on top)"""
     w = w.union(bx(x - 2.5, x + 2.5, y - 2.5, y + 2.5, floor_z - 0.5, ztop))
     return w.union(cyl_z(x, y, 1.4, ztop - 0.1, ztop + 2.0))
 
+TUB_DECK_X1 = OPI_X1 + CLR + 1.6 + 3.0
+TUB_DECK_Y1 = OPI_Y1 + 1.5
+
+import functools
+@functools.lru_cache(None)
+def tub_raw():
+    """full tub body (print 1 part + cap), before the split"""
+    po, pi = tub_plans()
+    outer, inner = body(tub_profile(), po, pi)
+    return outer.cut(inner)
+
 def main_tub():
-    plan_o = rrect(XRO, J_TUB + 1, -W, W, R_TUB)
-    plan_i = rrect(XRI, J_TUB + 1, -WI, WI, tuple(max(0.5, r - T) for r in R_TUB))
-    outer, t, cav = hollow(tub_profile(), TOP_T, plan_o, plan_i, profile_tall=tub_profile(TOP_T + 20))
-    t = motor_mount(t, XR, 'rear')
-    t = channel(t, M_GB_R + 1, tub_face_in(FLOOR) - 1)                       # starts clear of the motor cans
-    # deck: rear-wall ledge, right-wall ledge (the Pi deck spans Y -71.3 .. the plug zone), 2 posts on the free edge
+    t = tub_raw().intersect(BELOW())
+    t = motor_mount(t, XR)
+    t = channel(t, M_GB_R + 1, tub_face_in(FLOOR) - 1)
+    # Pi deck: rear-wall ledge, right-wall ledge, 2 posts on its free edge
     t = t.union(ledge(XRI, XRI + 3, -WI + 10, OPI_Y1 - 4, DECK_Z0, axis='x', into=+1))
-    t = t.union(ledge(XRI + 12, -21.0, -WI, -WI + 3, DECK_Z0, axis='y', into=+1))
+    t = t.union(ledge(XRI + 12, -PAD_HALF, -WI, -WI + 3, DECK_Z0, axis='y', into=+1))
     for (px, py) in ((XRI + 8.0, TUB_DECK_Y1 - 4.0), (TUB_DECK_X1 - 5.0, TUB_DECK_Y1 - 4.0)):
-        floor_here = FLOOR if px > TAIL_X - 2 else FLOOR + (TAIL_X - px) + 2
+        floor_here = FLOOR if px > TAIL_X - 2 else FLOOR + (TAIL_X - px) - 2      # sinks into the sloped tail floor
         t = deck_post(t, px, py, DECK_Z0, floor_here)
-    # lid bosses: 2 on each side wall, clear of the board and the E-stop
-    TUB_BOSSES.clear()
-    for xx in (XRI + 14.0, 2.0):
-        for s in (1, -1):
-            t, h = rim_boss(t, xx, s * WI, TOP_T, along='x', into=-s); TUB_BOSSES.append(h)
+    # board shelf ledges: right wall, rear wall, and a gusset on the raked front wall
+    t = t.union(ledge(XRI + 10, tub_face_in(SHELF_Z0) - 1, -WI, -WI + 3, SHELF_Z0, axis='y', into=+1))
+    t = t.union(ledge(XRI, XRI + 3, -WI + 10, BOARD_Y1 - 2, SHELF_Z0, axis='x', into=+1))
+    zf = SHELF_Z0
+    gus = Polygon([(tub_face_in(zf) + 0.2, zf), (tub_face_in(zf) - 3.5, zf), (tub_face_in(zf) - 3.5, zf - 0.8),
+                   (tub_face_in(zf - 6) + 0.2, zf - 6.5)])
+    t = t.union(prism_y(gus, -WI, BOARD_Y1 - 2))
     # 5 V regulator holder: open frame on the floor ahead of the left rear motor, board standing on edge
     rx0, rx1 = REG['x']; ry0, ry1 = REG['y']
     t = t.union(bx(rx0 - 1.2 - CLR, rx1 + CLR + 1.2, ry0 - 1.2 - CLR, ry1 + CLR + 1.2, FLOOR - 0.5, FLOOR + 8).cut(
         bx(rx0 - CLR, rx1 + CLR, ry0 - CLR, ry1 + CLR, FLOOR, FLOOR + 10)))
     # E-stop: Ø22.4 panel hole + 3.2 anti-rotation notch through the rear wall
     ey, ez = sum(ESTOP['y']) / 2, sum(ESTOP['z']) / 2
-    t = t.cut(cyl_x(ey, ez, 22.4 / 2, XRO - 1, XRI + 1))
+    t = t.cut(prism_x(teardrop2d(ey, ez, 22.4 / 2), XRO - 1, XRI + 1))                 # teardrop: the nut hides the point
     t = t.cut(bx(XRO - 1, XRI + 1, ey - 1.6, ey + 1.6, ez, ez + 24.1 - 11.2))
-    # Pi fan air: vent slots in both side walls between the Pi and the board
+    # Pi fan air: vent slots in both side walls between the Pi and the shelf
     for i in range(6):
         vx = OPI_X0 + 6 + i * 9.5
         for s in (1, -1):
             a, b = sorted((s * (WI - 1), s * (W + 1)))
-            t = t.cut(prism_y(Point(vx, OPI_Z1 + 3).buffer(1.6, 16).union(sbox(vx - 1.6, OPI_Z1 + 3, vx + 1.6, BOARD_Z0 - 3)).union(
-                teardrop2d(vx, BOARD_Z0 - 3, 1.6)), a, b))
+            t = t.cut(prism_y(Point(vx, OPI_Z1 + 3).buffer(1.6, 16).union(sbox(vx - 1.6, OPI_Z1 + 3, vx + 1.6, SHELF_Z0 - 3)).union(
+                teardrop2d(vx, SHELF_Z0 - 3, 1.6)), a, b))
+    # cap bosses: 2 per side wall, clear of the board and the E-stop
+    TUB_BOSSES.clear()
+    for xx in (XRI + 12.0, tub_face_in(H_IN) - 6.0):
+        for s in (1, -1):
+            t, h = cap_boss(t, xx, s * WI, -s); TUB_BOSSES.append(h)
     # hinge: inner + outer cups with the pin fused through them, pocket for the shell knuckle
     for s in (1, -1):
         for (y0, y1) in CUPS_Y:
@@ -327,60 +357,72 @@ def main_tub():
         a, b = sorted((s * (KN_Y[0] - GAP), s * (KN_Y[1] + GAP)))
         t = t.cut(prism_y(tub_knuckle_pocket2d(), a, b))
         a, b = sorted((s * 30.0, s * W))
-        t = t.union(prism_y(pin2d(), a, b))                                  # pin runs cup to cup through the pocket
-    # cable pass through the joint, on the centreline just above the pin (least stretch)
-    t = t.cut(bx(J_TUB - 12, J_TUB + 1, -10, 10, 33, 57))
+        t = t.union(prism_y(pin2d(), a, b))
+    t = t.cut(prism_x(CABLE_PASS, J_TUB - 12, J_TUB + 1))                                 # cable pass through the joint
     for (dx, dy) in ((-17, 0), (38, 55), (38, -55)):
         t = t.cut(cyl_z(dx, dy, 2, BELLY - 1, FLOOR + 1))
     return t
 
+@functools.lru_cache(None)
+def shell_raw():
+    po, pi = shell_plans()
+    outer, inner = body(shell_profile(), po, pi)
+    return outer.cut(inner), inner
+
 def front_shell():
-    plan_o = rrect(J_SH - 1, NOSE, -W, W, R_SH)
-    plan_i = rrect(J_SH - 1, NOSE_I, -WI, WI, tuple(max(0.5, r - T) for r in R_SH))
-    outer, f, cav = hollow(shell_profile(), TOP_S, plan_o, plan_i, profile_tall=shell_profile(TOP_S + 20, chamfer=0.01))
-    f = motor_mount(f, XF, 'front')
+    raw, cav = shell_raw()
+    f = raw.intersect(BELOW())
+    f = motor_mount(f, XF)
     f = channel(f, J_SH + T + 1, XF - M_GB_R - 1)
-    # deck: rear-wall ledge, right-wall ledges, front ledge on the nose-bay divider, 2 posts on the free edge
-    f = f.union(ledge(J_SH + T, J_SH + T + 3, -WI + 4, SH_DECK_Y1 - 4, DECK_Z0, axis='x', into=+1))
-    for (x0, x1) in ((J_SH + T + 14, XF - 21), (XF + 21, S2_X0 - DIV - 1)):
-        f = f.union(ledge(x0, x1, -WI, -WI + 3, DECK_Z0, axis='y', into=+1))
-    f = f.union(bx(S2_X0 - DIV, S2_X0, -WI, WI, FLOOR - 0.5, 100))
-    f = f.union(ledge(S2_X0 - DIV - 3, S2_X0 - DIV, -WI + 4, SH_DECK_Y1 - 4, DECK_Z0, axis='x', into=-1))
-    for px in (J_SH + T + 9.0, S2_X0 - DIV - 6.0):
-        floor_here = FLOOR if px < RAMP_X0 else FLOOR + (px - RAMP_X0) + 1
-        f = deck_post(f, px, SH_DECK_Y1 - 4.0, DECK_Z0, floor_here)
-    # nose bay: slot dividers, floor raised to S2_FLOOR
-    for yb in (ESP_SLOT[1], BAT_SLOT[1], NINE_SLOT[1]):
-        f = f.union(bx(S2_X0, NOSE_I + 0.5, yb, yb + DIV_S2, S2_FLOOR - 0.5, 100))
-    f = f.union(bx(S2_X0 + ESP[0] + 2 * CLR, S2_X0 + ESP[0] + 2 * CLR + DIV_S2, ESP_SLOT[0], ESP_SLOT[1], S2_FLOOR - 0.5, S2_FLOOR + 30))
-    f = f.union(bx(S2_X0 + TANK[0] + 2 * CLR, S2_X0 + TANK[0] + 2 * CLR + DIV_S2, TANK_SLOT[0], TANK_SLOT[1], S2_FLOOR - 0.5, S2_FLOOR + 30))
-    # XY-MOS x2 standing in the front pocket under pump 2 (next to the pumps they switch)
+    # pump deck: rear-wall ledge, side-wall ledges behind the pads (pad tops carry it over the motors), front ledge
+    f = f.union(ledge(J_SH + T, J_SH + T + 3, -WI + 4, WI - 4, DECK_Z0, axis='x', into=+1))
+    for s in (1, -1):
+        y0, y1 = sorted((s * WI, s * (WI - 3)))
+        f = f.union(ledge(J_SH + T + 14, XF - PAD_HALF, y0, y1, DECK_Z0, axis='y', into=-s))
+    # nose-bay rear divider: full height (it also carries the cap and the tank hatch)
+    # (the nose-bay rear wall rides on the pump deck: over the motors it would start in mid-air)
+    # ribs: items in the nose bay stand on rib tops at DECK_Z0 (vertical walls, no bridge, nothing over the motor)
+    for yc in RIBS_Y:
+        ztop = TANK_Z0 if TANK_SLOT[0] < yc < TANK_SLOT[1] else DECK_Z0
+        f = f.union(bx(XF + M_GB_R + 1.5, NOSE_I + 0.5, yc - 0.8, yc + 0.8, FLOOR - 0.5, ztop).intersect(cav))
+    # slot dividers (Y walls): servo/ESP | battery | 9V | tank. 9V|tank divider and the tank's front wall go to the cap
+    xm = XF + M_GB_R + 1.5                                    # ahead of the front motors a wall may reach the floor
+    for yb, ztop in ((ESP_SLOT[1], 118.0), (BAT_SLOT[1], 118.0), (NINE_SLOT[1], H_IN)):
+        f = f.union(bx(xm - 0.01, NOSE_I + 0.5, yb, yb + DIV, FLOOR - 0.5, ztop).intersect(cav))
+    tx1 = S2_X0 + TANK[0] + 2 * CLR
+    f = f.union(bx(tx1, tx1 + DIV, TANK_SLOT[0], WI + 0.5, TANK_Z0 - 4, H_IN).intersect(cav))
+    # ESP32: ledges on both slot walls carry it above the servo; USB-C comes up to the cap slot
+    ez0 = ESP_Z0 - 0.0
+    for s, yw in ((+1, ESP_SLOT[0]), (-1, ESP_SLOT[1])):
+        y0, y1 = sorted((yw, yw + s * 2.5))
+        f = f.union(ledge(S2_X0 + 1, SERVO_X1 - SERVO['body'][0] - CLR, y0, y1, ez0, d=2.5, axis='y', into=s))
+    # servo holder: two posts under the ears with M2 pilots, body pocket between them
+    sb0, sb1 = SERVO_X1 - SERVO['body'][0], SERVO_X1
+    f = f.union(bx(SERVO_EARS[0], XF + PAD_HALF, -WI, -M_FACE, DECK_Z0 - 0.1, DECK_Z0 + SERVO_SHIM))   # shim on the pad
+    for (p0, p1) in ((sb1 + CLR, SERVO_EARS[1]),):            # front ear on a post; the rear ear sits on the pad shim
+        post = bx(p0, p1, ESP_SLOT[0], ESP_SLOT[1], FLOOR - 0.5, SERVO_Z0 + SERVO['ear_z']).intersect(cav)
+        f = f.union(post).cut(cyl_z((p0 + p1) / 2, sum(ESP_SLOT) / 2, 0.9, SERVO_Z0 + SERVO['ear_z'] - 8, SERVO_Z0 + 30))
+    # refill-arm window in the right wall, ahead of the wheel, at horn height
+    f = f.cut(prism_y(Polygon([(ARM_WIN[0], SERVO_TOP + 1), (ARM_WIN[1], SERVO_TOP + 1), (ARM_WIN[1], SERVO_TOP + 7),
+                               (ARM_WIN[1] - 6, SERVO_TOP + 13), (ARM_WIN[0] + 6, SERVO_TOP + 13), (ARM_WIN[0], SERVO_TOP + 7)]), -W - 5, -WI + 0.5))
+    # XY-MOS x2 standing in the bay behind the front motors (wired once, next to the pumps they switch)
     for yc in XYMOS_Y:
         x0, x1 = XYMOS_X[0] - CLR, XYMOS_X[1] + CLR
         y0, y1 = yc - 17 - CLR, yc + 17 + CLR
         f = f.union(bx(x0 - 1.2, x1 + 1.2, y0 - 1.2, y1 + 1.2, FLOOR - 0.5, FLOOR + 8).cut(bx(x0, x1, y0, y1, FLOOR, FLOOR + 10)))
-    # lid bosses: rear wall in the wet corridor, front corners of the nose bay
+    # VL53L0X: window through the 45 deg nose slope, sensor lies on the slope looking 45 deg down-forward
+    vx, vy = VL53_X, VL53_Y
+    vz = NOSE_SLOPE_IN(vx)
+    win = bx(-4.5, 4.5, -4.0, 4.0, -6, 6).rotate((0, 0, 0), (0, 1, 0), -45).translate((vx + 1.2, vy, vz - 1.2))
+    f = f.cut(win)
+    for dy in (-7.6, 7.6):     # two rails along the slope hold the 12 mm board edges
+        rail = bx(-14, 14, -1.0, 1.0, 0, 2.2).rotate((0, 0, 0), (0, 1, 0), -45).translate((vx, vy + dy, vz))
+        f = f.union(rail.intersect(cav))
+    # cap bosses: rear wall (right of the upper pump's bend zone), both front corners
     SHELL_BOSSES.clear()
-    f, h = rim_boss(f, 64.0, J_SH + T, TOP_S, along='y', into=+1); SHELL_BOSSES.append(h)          # past pump 1's bend zone
+    f, h = cap_boss(f, -WI + 4.1, J_SH + T, +1, along='y'); SHELL_BOSSES.append(h)
     for s in (1, -1):
-        f, h = rim_boss(f, NOSE_I - 5.0, s * WI, TOP_S, along='x', into=-s); SHELL_BOSSES.append(h)    # ahead of tank / ESP32
-    # tube clips on the left wall: the wet corridor's straight run (beyond the bend zones), open-top U, 45 deg gusset
-    for cxp in (70.0, 112.0):
-        prof = unary_union([Polygon([(WI, TUBE_Z - 19), (WI - 12, TUBE_Z - 7), (WI - 12, TUBE_Z + 5), (WI, TUBE_Z + 5)])]).difference(
-            unary_union([Point(WI - 6.5, TUBE_Z).buffer(4.9, 32), sbox(WI - 9.5, TUBE_Z, WI - 3.5, TUBE_Z + 10)]))
-        g = cq.Workplane('YZ').polyline(ring(list(polys(prof)[0].exterior.coords))).close().extrude(6.0).translate((cxp - 3, 0, 0))
-        f = f.union(g)
-    # VL53L0X window in the nose (sensor rides on the lid bracket, 45 deg down)
-    vy = sum(NINE_SLOT) / 2
-    f = f.cut(bx(NOSE_I - 1, NOSE + 1, vy - 7, vy + 7, TOP_S - 22, TOP_S - 6))
-    # servo pod (refill arm) outside the right nose wall, ahead of the front wheel: body pocket, ears on the rim
-    pcx = SERVO_CX
-    pod = rrect(pcx - 17.5, pcx + 17.5, -W - 14.6, -W + 1, (4, 4, 0.5, 0.5))
-    f = f.union(prism_z(pod, BELLY + 10, SERVO_Z0 + 18.5))
-    f = f.cut(bx(pcx - 11.9, pcx + 11.9, -W - 13.0, -W, SERVO_Z0, SERVO_Z0 + 40))                          # body pocket 22.8 + 1
-    for sx in (-1, 1):
-        f = f.cut(cyl_z(pcx + sx * 13.9, -W - 6.5, 1.0, SERVO_Z0 + 8, SERVO_Z0 + 19))                         # ear screws (M2 self-tap)
-    f = f.cut(teardrop_y(pcx - 8, SERVO_Z0 + 4, 3.0, -W - 1, -WI + 1))                                       # servo lead into the ESP32 slot
+        f, h = cap_boss(f, NOSE_I - 5.0, s * WI, -s); SHELL_BOSSES.append(h)
     # hinge: knuckles with teardrop bore, pockets for the tub's cups (cut through the side wall too)
     for s in (1, -1):
         a, b = sorted((s * KN_Y[0], s * KN_Y[1]))
@@ -390,97 +432,121 @@ def front_shell():
             f = f.cut(prism_y(shell_cup_pocket2d(), a, b))
         a, b = sorted((s * (KN_Y[0] - 1), s * (KN_Y[1] + 1)))
         f = f.cut(prism_y(shell_bore2d(), a, b))
-    f = f.cut(bx(J_SH - 1, J_SH + T + 1, -10, 10, 33, 57))                                                  # cable pass
-    for (dx, dy) in ((100, 0), (150, -20)):
-        f = f.cut(cyl_z(dx, dy, 2, BELLY - 1, S2_FLOOR + 1))
+    f = f.cut(prism_x(CABLE_PASS, J_SH - 1, J_SH + T + 1))                               # cable pass
+    for (dx, dy) in ((100, 0), (118, -20)):
+        f = f.cut(cyl_z(dx, dy, 2, BELLY - 1, FLOOR + 2))
     return f
 
-# ---------------- removable parts (print 2) ----------------
+# derived positions used above
+ESP_X1 = S2_X0 + CLR + ESP[0]
+SERVO_X1 = ESP_X1 + CLR + 2.4 + SERVO['shaft_from_front']            # shaft (Ø4.8) just ahead of the ESP32 above it
+SERVO_SHAFT_X = SERVO_X1 - SERVO['shaft_from_front']
+SERVO_Z0 = NOSE_SLOPE_IN(SERVO_X1) + CLR                             # body front-bottom edge 0.45 above the nose slope
+SERVO_SHIM = SERVO_Z0 + SERVO['ear_z'] - DECK_Z0                     # rear ear rests on a shim on the right front motor pad
+RIBS_Y = (-47.0, -24.0, 2.0, sum(NINE_SLOT) / 2, TANK_SLOT[0] + 9.0, TANK_SLOT[1] - 9.0)
+SERVO_TOP = SERVO_Z0 + SERVO['body'][2]
+SERVO_EARS = (SERVO_X1 - SERVO['body'][0] / 2 - SERVO['ears'] / 2, SERVO_X1 - SERVO['body'][0] / 2 + SERVO['ears'] / 2)
+ESP_Z0 = SERVO_TOP + CLR
+ESP_Z1 = ESP_Z0 + ESP[2]
+OVER_MOTOR_Z = 64.2                 # walls above the front motors start here (gearbox top 65.5 at X 93.5, 63.4 at X 102)
+ARM_WIN = (SERVO_SHAFT_X - 8.0, NOSE_I - 1.0)   # refill-arm window, right wall, at horn height
+# at the arm's height the worst-case wheel only reaches X = 93.5 + sqrt(R^2 - (z - 40)^2): the window must start ahead of that
+ARM_WHEEL_X = XF + math.sqrt(max(0.0, WHEEL_R_WORST ** 2 - (SERVO_TOP + 1 - ZH) ** 2))
+assert ARM_WIN[0] > ARM_WHEEL_X + 2, ('refill arm would meet the wheel', ARM_WIN, ARM_WHEEL_X)
+VL53_X, VL53_Y = NOSE_I - 14.0, -35.5
+assert ESP_Z1 <= H_IN - CLR, ('ESP32 does not fit over the servo', ESP_Z1, H_IN)
+
+# ---------------- print 2 ----------------
+def cap_of(raw, trim_at_joint):
+    c = raw.intersect(ABOVE()).cut(trim_at_joint)
+    return c
+
+def tub_cap():
+    c = cap_of(tub_raw(), prism_y(Polygon([(tub_face_x(Z_SPLIT - 30) - 1.5, Z_SPLIT - 30), (200, Z_SPLIT - 30), (200, H + 50),
+                                           (tub_face_x(H + 50) - 1.5, H + 50)]), -W - 5, W + 5))
+    for (hx, hy) in TUB_BOSSES:
+        c = c.cut(cyl_z(hx, hy, 1.7, H_IN - 1, H + 1))
+    for (px, py) in LIDAR_PADS:                                       # LiDAR plate screws: pads under the cap (prints top-down)
+        c = c.union(cyl_z(px, py, 3.5, H_IN - 5.0, H_IN + 0.1)).cut(cyl_z(px, py, 1.25, H_IN - 6, H + 1))
+    c = c.cut(prism_z(rrect(*LIDAR_LEAD, (2, 2, 2, 2)), H_IN - 1, H + 1))
+    return c
+
+def shell_cap():
+    c = cap_of(shell_raw()[0], bx(J_SH - 10, J_SH + 1.5, -W - 5, W + 5, Z_SPLIT - 1, H + 5))
+    c = c.cut(hatch_box(0.0))                                         # tank lifts straight out here
+    for (hx, hy) in SHELL_BOSSES:
+        c = c.cut(cyl_z(hx, hy, 1.7, H_IN - 1, H + 1))
+    c = c.cut(prism_z(rrect(S2_X0 + 3, S2_X0 + ESP[0] - 3, ESP_SLOT[0] + 4.0, ESP_SLOT[1] - 2.0, (2, 2, 2, 2)), H_IN - 1, H + 1))  # ESP32 USB-C
+    sx = SERVO_SHAFT_X
+    return c
+
+def hatch_box(shrink):
+    tx0 = S2_X0 - DIV / 2 + shrink
+    tx1 = S2_X0 + TANK[0] + 2 * CLR + DIV / 2 - shrink
+    ty0 = TANK_SLOT[0] - DIV / 2 + shrink
+    return bx(tx0, tx1, ty0, W + 10, Z_SPLIT - 1, H + 5)
+
+def tank_hatch():
+    """a piece of the shell cap over the tank: rests on the two full-height walls and the left wall top"""
+    c = shell_raw()[0].intersect(ABOVE()).intersect(hatch_box(0.3))
+    tx = (S2_X0 + S2_X0 + TANK[0]) / 2
+    return c.cut(cyl_z(tx, (TANK_SLOT[0] + WI) / 2 - 6, 5.5, H_IN - 1, H + 1))     # Ø11 tube grommet
+
 def tub_deck():
-    """Pi deck: just the Pi's footprint + its holder, resting on the rear/right ledges and two posts"""
-    d = prism_z(rrect(XRI + 0.3, TUB_DECK_X1, -WI + 0.3, TUB_DECK_Y1, (max(0.5, R_TUB[0] - T - 0.3), 1, 2, 2)), DECK_Z0, DECK_Z1)
-    # holder: 3 walls (port end open so plugs go straight in), 6 tall
+    d = prism_z(rrect(XRI + 0.3, TUB_DECK_X1, -WI + 0.3, TUB_DECK_Y1, (max(0.5, R_V - T - 0.3), 1, 2, 2)), DECK_Z0, DECK_Z1)
     fr = bx(OPI_X0 - CLR - 1.6, OPI_X1 + CLR + 1.6, OPI_Y0 - CLR - 1.6, OPI_Y1 - 2.0, DECK_Z1 - 0.1, DECK_Z1 + 6).cut(
         bx(OPI_X0 - CLR, OPI_X1 + CLR, OPI_Y0 - CLR, OPI_Y1 + 5, DECK_Z1 - 1, DECK_Z1 + 7))
     d = d.union(fr)
     cx, cy = (OPI_X0 + OPI_X1) / 2, (OPI_Y0 + OPI_Y1) / 2
-    for dy in (-32.5, 32.5):                                         # N515 keyhole slots, 65 apart on the long axis
+    for dy in (-32.5, 32.5):
         d = d.cut(cyl_z(cx, cy + dy, 1.7, DECK_Z0 - 1, DECK_Z1 + 1))
     for (px, py) in ((XRI + 8.0, TUB_DECK_Y1 - 4.0), (TUB_DECK_X1 - 5.0, TUB_DECK_Y1 - 4.0)):
-        d = d.cut(cyl_z(px, py, 1.7, DECK_Z0 - 1, DECK_Z1 + 1))     # posts' locating pegs
-    d = d.cut(prism_z(rrect(cx - 22, cx + 22, cy - 30, cy + 30, (6, 6, 6, 6)), DECK_Z0 - 1, DECK_Z1 + 1))   # lightening + air
-    return d
+        d = d.cut(cyl_z(px, py, 1.7, DECK_Z0 - 1, DECK_Z1 + 1))
+    return d.cut(prism_z(rrect(cx - 22, cx + 22, cy - 30, cy + 30, (6, 6, 6, 6)), DECK_Z0 - 1, DECK_Z1 + 1))
 
-def shell_deck():
-    """pump deck: two pump pockets (rear wall / divider / nose-bay divider are the stops), straps, tube clips"""
-    x0, x1 = J_SH + T + 0.3, S2_X0 - DIV - 0.3
-    d = prism_z(rrect(x0, x1, -WI + 0.3, SH_DECK_Y1, (1, 1, 2, 2)), DECK_Z0, DECK_Z1)
-    d = d.union(bx(P1_X1 + CLR, P2_X0 - CLR, -WI + 0.3, SH_DECK_Y1 - 3, DECK_Z1 - 0.1, DECK_Z1 + 12))
-    for (px0, px1) in ((P1_X0, P1_X1), (P2_X0, P2_X1)):
-        for yy in (-50.0, 0.0):                                                     # strap slots either side of each pump
-            for xx in (max(px0 - 0.2, x0 + 0.8), px1 - 3.6):
-                d = d.cut(bx(xx, xx + 3.0, yy - 3, yy + 3, DECK_Z0 - 1, DECK_Z1 + 1))
-    for px in (J_SH + T + 9.0, S2_X0 - DIV - 6.0):
-        d = d.cut(cyl_z(px, SH_DECK_Y1 - 4.0, 1.7, DECK_Z0 - 1, DECK_Z1 + 1))
-    for px in ((P1_X0 + P1_X1) / 2, (P2_X0 + P2_X1) / 2):
-        d = d.cut(prism_z(rrect(px - 12, px + 12, -40, 20, (5, 5, 5, 5)), DECK_Z0 - 1, DECK_Z1 + 1))     # lightening
-    return d
-
-def lid_tub():
-    """tub lid. Prints top-down: board standoffs hang from it (board components up, IMU unchanged);
-    the LiDAR plate screws into the top of the two standoffs nearest the centreline."""
-    xf = tub_face_x(TOP_T + LID_T) - 1.5
-    l = prism_z(rrect(XRO, xf, -W, W, (R_TUB[0], 2, 2, R_TUB[3])), TOP_T, TOP_T + LID_T)
-    l = try_fillet(l, '>Z', 1.2)
-    for (hx, hy) in TUB_BOSSES:
-        l = l.cut(cyl_z(hx, hy, 1.7, TOP_T - 1, TOP_T + LID_T + 1))
+def tub_shelf():
+    x1 = tub_face_in(SHELF_Z1) - 0.3
+    y1 = BOARD_Y1 + 1.0
+    s = prism_z(rrect(XRI + 0.3, x1, -WI + 0.3, y1, (max(0.5, R_V - T - 0.3), 1, 1, 1)), SHELF_Z0, SHELF_Z1)
+    s = s.union(bx(XRI + 4, x1 - 4, y1 - 2.0, y1, SHELF_Z0 - 7, SHELF_Z0))         # stiffening rib under the free edge
     for (hx, hy) in BOARD_HOLES:
-        l = l.union(cyl_z(hx, hy, 2.9, PCB_Z + 1.6, TOP_T + 0.1))                   # standoff down to the PCB
-        l = l.cut(cyl_z(hx, hy, 1.1, PCB_Z, TOP_T - 6))                              # M2.5 pilot from below
-        if abs(hy - LIDAR_HOLE_Y) < 1:
-            l = l.cut(cyl_z(hx, hy, 1.1, TOP_T - 8, TOP_T + LID_T + 1))              # ... and from the top (LiDAR plate)
-    l = l.cut(prism_z(rrect(*LIDAR_LEAD, (2, 2, 2, 2)), TOP_T - 1, TOP_T + LID_T + 1))   # LiDAR lead
-    return l
+        s = s.union(cyl_z(hx, hy, 2.6, SHELF_Z1 - 0.1, BOARD_Z0)).cut(cyl_z(hx, hy, 1.1, SHELF_Z0 - 1, BOARD_Z0 + 1))
+    fx, fy = (OPI_X0 + OPI_X1) / 2, (OPI_Y0 + OPI_Y1) / 2                           # open over the Pi's fan
+    return s.cut(prism_z(rrect(fx - 18, fx + 18, fy - 18, fy + 18, (4, 4, 4, 4)), SHELF_Z0 - 1, SHELF_Z1 + 1))
+
+def pump_deck():
+    x0, x1 = J_SH + T + 0.3, S2_X0 - 0.3
+    d = prism_z(rrect(x0, x1, -WI + 0.3, WI - 0.3, (1, 1, 1, 1)), DECK_Z0, DECK_Z1)
+    # nose-bay rear wall stands on the deck: full height where the tank hatch rests on it, lower elsewhere (cables pass over)
+    w0, x1 = P_X1 + CLR, S2_X0                                   # 0.45 from the pumps and from the nose-bay parts
+    d = d.union(bx(w0, x1, TANK_SLOT[0] - DIV, WI - 0.3, DECK_Z1 - 0.1, H_IN - 0.05))
+    d = d.union(bx(w0, x1, -WI + 0.3, TANK_SLOT[0] - DIV + 0.01, DECK_Z1 - 0.1, 125.0))
+    # gussets on the pump side, only where neither pump nor a bend zone is: left end full height, right end above the lower pump
+    py1 = WI - CLR - PUMP_UP_SHIFT
+    for (ya, yb, za, zb) in ((py1 + CLR, WI - 0.3, DECK_Z1, H_IN - 0.05), (-WI + 0.3, -WI + CLR + PUMP[1] - PUMP[1] + 7.5, P_Z[1] + CLR, 125.0)):
+        d = d.union(prism_y(Polygon([(w0 + 0.01, za), (w0 - 8, za), (w0 + 0.01, za + 8)]), ya, yb).union(bx(w0 - 2.5, w0 + 0.01, ya, yb, za, zb)))
+    for yy in (-45.0, 45.0):                                                     # two straps round the pump stack
+        for xx in (x0 + 0.8, w0 - 9.8):
+            d = d.cut(bx(xx, xx + 3.0, yy - 3.5, yy + 3.5, DECK_Z0 - 1, DECK_Z1 + 1))
+    d = d.cut(prism_z(rrect(XF - 10, XF + 6, -6, 6, (2, 2, 2, 2)), DECK_Z0 - 1, DECK_Z1 + 1))   # plug access over the motor gap
+    return d
 
 def lidar_mount():
-    """D500 plate: LiDAR centred on the tub, 3 x M2.5 from the LiDAR into the plate, 2 x M2.5 through into the standoffs"""
-    cx, z0 = LIDAR['cx'], TOP_T + LID_T
-    xs = [hx for (hx, hy) in BOARD_HOLES if abs(hy - LIDAR_HOLE_Y) < 1]
-    m = prism_z(rrect(min(xs) - 4.5, max(xs) + 3.7, -LIDAR['fp'][1] / 2 - 1, LIDAR['fp'][1] / 2 + 1, (5, 5, 5, 5)), z0, z0 + LIDAR['plate'])
+    """flat plate for the D500 on the tub cap: 4 x M3 into the cap pads, 3 x M2.5 from the LiDAR into the plate"""
+    cx, z0 = LIDAR['cx'], H
+    m = prism_z(rrect(cx - LIDAR['fp'][0] / 2 - 1.5, cx + LIDAR['fp'][0] / 2 + 1.5, -LIDAR['fp'][1] / 2 - 1.5, LIDAR['fp'][1] / 2 + 1.5,
+                      (5, 5, 5, 5)), z0, z0 + LIDAR['plate'])
+    m = try_fillet(m, '>Z', 1.0)
     for (hx, hy) in LIDAR_HOLES:
-        m = m.cut(cyl_z(hx, hy, 1.1, z0 + 0.6, z0 + 5))
-    for hx in xs:
-        m = m.cut(cyl_z(hx, LIDAR_HOLE_Y, 1.4, z0 - 1, z0 + 5)).cut(cyl_z(hx, LIDAR_HOLE_Y, 2.6, z0 + LIDAR['plate'] - 1.5, z0 + 5))
-    
-    return m
-
-def lid_shell():
-    x0 = J_SH + 1.5
-    l = prism_z(rrect(x0, NOSE, -W, W, (2, R_SH[1], R_SH[2], 2)), TOP_S, TOP_S + LID_T)
-    l = try_fillet(l, '>Z', 1.2)
-    tx0, tx1 = S2_X0 - 0.2, S2_X0 + TANK[0] + 2 * CLR + 0.2
-    l = l.cut(bx(tx0, tx1, TANK_SLOT[0] - 0.2, WI - 0.6, TOP_S - 1, TOP_S + LID_T + 1))                      # tank lifts out here
-    l = l.cut(prism_z(rrect(S2_X0 + 2, S2_X0 + ESP[0] - 2, ESP_SLOT[0] + 1.5, ESP_SLOT[1] - 1.5, (2, 2, 2, 2)), TOP_S - 1, TOP_S + LID_T + 1))
-    for (hx, hy) in SHELL_BOSSES:
-        l = l.cut(cyl_z(hx, hy, 1.7, TOP_S - 1, TOP_S + LID_T + 1))
-    # VL53L0X bracket: 45 deg plate hanging at the nose, behind the window
-    vy = sum(NINE_SLOT) / 2; zc = TOP_S - 14
-    plate = Polygon([(NOSE_I - 0.6, zc + 8), (NOSE_I - 12.5, TOP_S + 0.1), (NOSE_I - 15.5, TOP_S + 0.1), (NOSE_I - 3.6, zc + 5.0)])
-    l = l.union(prism_y(plate, vy - 7.5, vy + 7.5))
-    return l
-
-def tank_hatch():
-    tx0, tx1 = S2_X0 - 0.2, S2_X0 + TANK[0] + 2 * CLR + 0.2
-    ty0, ty1 = TANK_SLOT[0] - 0.2, WI - 0.6
-    h = prism_z(rrect(tx0 - 3, tx1 + 3, ty0 - 3, min(ty1 + 3, W - 0.2), (3, 3, 3, 3)), TOP_S + LID_T, TOP_S + LID_T + 2.0)
-    h = h.union(bx(tx0 + 0.25, tx1 - 0.25, ty0 + 0.25, ty1 - 0.25, TOP_S + 0.6, TOP_S + LID_T + 0.1).cut(
-        bx(tx0 + 1.85, tx1 - 1.85, ty0 + 1.85, ty1 - 1.85, TOP_S, TOP_S + LID_T)))
-    h = h.cut(cyl_z((tx0 + tx1) / 2, (ty0 + ty1) / 2 - 8, 5.5, TOP_S, TOP_S + 10))             # tube grommet (Ø11)
-    return h
+        m = m.cut(cyl_z(hx, hy, 1.1, z0 + 0.8, z0 + 6))
+    for (px, py) in LIDAR_PADS:
+        m = m.cut(cyl_z(px, py, 1.7, z0 - 1, z0 + 6)).cut(cyl_z(px, py, 3.0, z0 + LIDAR['plate'] - 1.8, z0 + 6))
+    return m.cut(prism_z(rrect(*LIDAR_LEAD, (2, 2, 2, 2)), z0 - 1, z0 + 6))
 
 # ---------------- components (ghosts) ----------------
 def components():
-    """name -> (cq solid, body, bay, mass g, mass source). body = 'tub' | 'shell' | 'wheel'."""
+    """name -> (cq solid, body, bay, mass g, mass source, seat). body = 'tub' | 'shell' | 'wheel'.
+    seat = how it is held: the faces that are SUPPOSED to touch (excluded from the clearance check)."""
     C = {}
     def motor(xa, s):
         y0 = s * M_FACE; yg = s * (M_FACE - M_GB_L); yb = s * (M_FACE - M_LEN)
@@ -489,40 +555,41 @@ def components():
     for (xa, body, nm) in ((XR, 'tub', 'rear'), (XF, 'shell', 'front')):
         bay = 'tub_lower' if body == 'tub' else 'shell_lower'
         for s, side in ((1, 'L'), (-1, 'R')):
-            C[f'motor_{nm}_{side}'] = (motor(xa, s), body, bay, 150, 'team')
-            C[f'wheel_{nm}_{side}'] = (cyl_y(xa, ZH, 86.6 / 2, *sorted((s * 76.0, s * 114.0))), 'wheel', None, 60, 'estimate')
-    C['orange_pi_n515'] = (bx(OPI_X0, OPI_X1, OPI_Y0, OPI_Y1, OPI_Z0, OPI_Z1), 'tub', 'tub_upper', 200, 'estimate (Pi 5 Max + metal case)')
-    brd = bx(BOARD_X0, BOARD_X1, BOARD_Y0, BOARD_Y1 + 3.0, BOARD_Z0, BOARD_Z1)   # one solid: pins, PCB, parts, +3 connector overhang
-    for (hx, hy) in BOARD_HOLES:
-        brd = brd.cut(cyl_z(hx, hy, 3.2, PCB_Z + 1.6, BOARD_Z1 + 1))              # keep-clear round each mounting hole
-    C['yahboom_board'] = (brd, 'tub', 'tub_upper', 50, 'estimate')
-    C['estop_body'] = (bx(XRI, XRI + ESTOP['depth'], *ESTOP['y'], *ESTOP['z']), 'tub', 'tub_upper', 60, 'estimate')
+            C[f'motor_{nm}_{side}'] = (motor(xa, s), body, bay, 150, 'team', dict(face_y=s * M_FACE))
+            C[f'wheel_{nm}_{side}'] = (cyl_y(xa, ZH, WHEEL_R_WORST, *sorted((s * 76.0, s * 114.0))), 'wheel', None, 60, 'estimate', None)
+    C['orange_pi_n515'] = (bx(OPI_X0, OPI_X1, OPI_Y0, OPI_Y1, OPI_Z0, OPI_Z1), 'tub', 'tub_upper', 200, 'estimate (Pi 5 Max + metal case)', 'bottom')
+    brd = bx(BOARD_X0, BOARD_X1, BOARD_Y0, BOARD_Y1 + 3.0, BOARD_Z0, BOARD_Z1)
+    C['yahboom_board'] = (brd, 'tub', 'tub_upper', 50, 'estimate', 'bottom')
+    C['estop_body'] = (bx(XRI, XRI + ESTOP['depth'], *ESTOP['y'], *ESTOP['z']), 'tub', 'tub_upper', 60, 'estimate', dict(face_x=XRI))
     ey, ez = sum(ESTOP['y']) / 2, sum(ESTOP['z']) / 2
-    C['estop_head'] = (cyl_x(ey, ez, ESTOP['head_r'], XRO - ESTOP['head_h'], XRO), 'tub', None, 0, '')
-    C['regulator_5v'] = (bx(*REG['x'], *REG['y'], *REG['z']), 'tub', 'tub_lower', 5, 'Pololu')
-    lz = TOP_T + LID_T + LIDAR['plate']; cx = LIDAR['cx']
-    C['lidar_d500'] = (bx(cx - 27.0, cx + 27.0, -46.29 / 2, 46.29 / 2, lz, lz + 34.8 - 12.6).union(
-        cyl_z(cx, 0, 35.29 / 2, lz + 34.8 - 12.6, lz + 34.8)), 'tub', None, 42, 'LD19 datasheet')
-    py0 = -WI + CLR
-    C['pump_1'] = (bx(P1_X0, P1_X1, py0, py0 + PUMP[1], DECK_Z1, DECK_Z1 + PUMP[2]), 'shell', 'shell_upper', 75, 'estimate')
-    C['pump_2'] = (bx(P2_X0, P2_X1, py0, py0 + PUMP[1], DECK_Z1, DECK_Z1 + PUMP[2]), 'shell', 'shell_upper', 75, 'estimate')
-    C['tank_water'] = (bx(S2_X0 + CLR, S2_X0 + CLR + TANK[0], TANK_SLOT[0] + CLR, TANK_SLOT[0] + CLR + TANK[1], S2_FLOOR, S2_FLOOR + TANK[2]),
-                       'shell', 'nose', 125, 'estimate (tank ~30 g + ~95 ml water)')
-    C['battery_3s2p'] = (bx(S2_X0 + CLR, S2_X0 + CLR + BATT[0], BAT_SLOT[0] + CLR, BAT_SLOT[0] + CLR + BATT[1], S2_FLOOR, S2_FLOOR + BATT[2]),
-                         'shell', 'nose', 310, 'team')
+    C['estop_head'] = (cyl_x(ey, ez, ESTOP['head_r'], XRO - ESTOP['head_h'], XRO), 'tub', None, 0, '', None)
+    C['regulator_5v'] = (bx(*REG['x'], *REG['y'], *REG['z']), 'tub', 'tub_lower', 5, 'Pololu', 'bottom')
+    cx = LIDAR['cx']; lz = H + LIDAR['plate']
+    C['lidar_d500'] = (bx(cx - LIDAR['fp'][0] / 2, cx + LIDAR['fp'][0] / 2, -LIDAR['fp'][1] / 2, LIDAR['fp'][1] / 2, lz, lz + 34.8 - 12.6).union(
+        cyl_z(cx, 0, 35.29 / 2, lz + 34.8 - 12.6, lz + 34.8)), 'tub', None, 42, 'LD19 datasheet', 'bottom')
+    py0, py1 = -WI + CLR, WI - CLR
+    C['pump_lower'] = (bx(P_X0, P_X1, py0, py0 + PUMP[1], P_Z[0], P_Z[1]), 'shell', 'shell_upper', 75, 'estimate', 'bottom')
+    C['pump_upper'] = (bx(P_X0, P_X1, py1 - PUMP_UP_SHIFT - PUMP[1], py1 - PUMP_UP_SHIFT, P_Z[1], P_Z[2]), 'shell', 'shell_upper', 75, 'estimate', 'bottom')
+    x0 = S2_X0 + CLR
+    C['tank_water'] = (bx(x0, x0 + TANK[0], TANK_SLOT[0] + CLR, TANK_SLOT[0] + CLR + TANK[1], TANK_Z0, TANK_Z0 + TANK[2]),
+                       'shell', 'nose', 125, 'estimate (tank ~30 g + ~95 ml water)', 'bottom')
+    C['battery_3s2p'] = (bx(x0, x0 + BATT[0], BAT_SLOT[0] + CLR, BAT_SLOT[0] + CLR + BATT[1], DECK_Z0, DECK_Z0 + BATT[2]),
+                         'shell', 'nose', 310, 'team', 'bottom')
     for i in range(2):
-        z0 = S2_FLOOR + i * NINE[2]
-        C[f'nine_volt_{i + 1}'] = (bx(S2_X0 + CLR, S2_X0 + CLR + NINE[0], NINE_SLOT[0] + CLR, NINE_SLOT[0] + CLR + NINE[1], z0, z0 + NINE[2]),
-                                   'shell', 'nose', 30, 'estimate')
-    C['esp32_s3'] = (bx(S2_X0 + CLR, S2_X0 + CLR + ESP[0], ESP_SLOT[0] + CLR, ESP_SLOT[0] + CLR + ESP[1], S2_FLOOR, S2_FLOOR + ESP[2]),
-                     'shell', 'nose', 10, 'estimate')
+        z0 = DECK_Z0 + i * NINE[2]
+        C[f'nine_volt_{i + 1}'] = (bx(x0, x0 + NINE[0], NINE_SLOT[0] + CLR, NINE_SLOT[0] + CLR + NINE[1], z0, z0 + NINE[2]),
+                                   'shell', 'nose', 30, 'estimate', 'bottom')
+    C['esp32_s3'] = (bx(x0, x0 + ESP[0], ESP_SLOT[0] + CLR + ESP_OFF, ESP_SLOT[0] + CLR + ESP_OFF + ESP[1], ESP_Z0, ESP_Z1), 'shell', 'nose', 10, 'estimate', 'bottom')
     for i, yc in enumerate(XYMOS_Y):
-        C[f'xy_mos_{i + 1}'] = (bx(*XYMOS_X, yc - 17, yc + 17, FLOOR, FLOOR + 17), 'shell', 'shell_lower', 8, 'estimate')
-    vy = sum(NINE_SLOT) / 2
-    v = bx(-12.5, 12.5, -6, 6, -1.6, 1.6).rotate((0, 0, 0), (0, 1, 0), 45).translate((NOSE_I - 7.0, vy, TOP_S - 10.5))
-    C['vl53l0x'] = (v, 'shell', 'nose', 1, 'datasheet')
-    C['servo_mg90s'] = (bx(SERVO_CX - 11.4, SERVO_CX + 11.4, -W - 12.7, -W - 0.5, SERVO_Z0, SERVO_Z0 + 28.5).union(
-        bx(SERVO_CX - 16, SERVO_CX + 16, -W - 12.7, -W - 0.5, SERVO_Z0 + 18.6, SERVO_Z0 + 21)), 'shell', None, 13, 'datasheet')
+        C[f'xy_mos_{i + 1}'] = (bx(*XYMOS_X, yc - 17, yc + 17, FLOOR, FLOOR + 17), 'shell', 'shell_lower', 8, 'estimate', 'bottom')
+    vz = NOSE_SLOPE_IN(VL53_X)
+    C['vl53l0x'] = (bx(-12.5, 12.5, -6, 6, 0, 3.2).rotate((0, 0, 0), (0, 1, 0), -45).translate((VL53_X, VL53_Y, vz + CLR * 1.42)),
+                    'shell', 'shell_lower', 1, 'datasheet', dict(plane=[-1 / math.sqrt(2), 0, 1 / math.sqrt(2), (vz - VL53_X) / math.sqrt(2)]))
+    sb = SERVO['body']; sy0, sy1 = ESP_SLOT[0] + CLR, ESP_SLOT[0] + CLR + sb[1]
+    C['servo_mg90s'] = (bx(SERVO_X1 - sb[0], SERVO_X1, sy0, sy1, SERVO_Z0, SERVO_TOP).union(
+        bx(SERVO_EARS[0], SERVO_EARS[1], sy0, sy1, SERVO_Z0 + SERVO['ear_z'], SERVO_Z0 + SERVO['ear_z'] + 2.5)).union(
+        cyl_z(SERVO_SHAFT_X, (sy0 + sy1) / 2, 2.4, SERVO_TOP - 0.01, SERVO_TOP + 4.0)), 'shell', 'nose', 13, 'datasheet',
+        dict(ear_z=SERVO_Z0 + SERVO['ear_z']))
     return C
 
 def keepouts():
@@ -531,62 +598,67 @@ def keepouts():
     K['pi_plug_zone'] = (bx(OPI_X0, OPI_X1, OPI_Y1, OPI_Y1 + OPI_PLUG, OPI_Z0, OPI_Z1), 'tub', 'tub_upper')
     fx, fy = (OPI_X0 + OPI_X1) / 2, (OPI_Y0 + OPI_Y1) / 2
     K['pi_fan_air'] = (bx(fx - 20, fx + 20, fy - 20, fy + 20, OPI_Z1, OPI_Z1 + OPI_AIR), 'tub', 'tub_upper')
-    py1 = -WI + CLR + PUMP[1]
-    K['pump_1_bends'] = (bx(P1_X0, P1_X1, py1, py1 + BEND, DECK_Z1, DECK_Z1 + PUMP[2]), 'shell', 'shell_upper')
-    K['pump_2_bends'] = (bx(P2_X0, P2_X1, py1, py1 + BEND, DECK_Z1, DECK_Z1 + PUMP[2]), 'shell', 'shell_upper')
+    py0, py1 = -WI + CLR, WI - CLR
+    K['pump_lower_bends'] = (bx(P_X0, P_X1, py0 + PUMP[1], py0 + PUMP[1] + BEND, P_Z[0], P_Z[1]), 'shell', 'shell_upper')
+    K['pump_upper_bends'] = (bx(P_X0, P_X1, py1 - PUMP_UP_SHIFT - PUMP[1] - BEND, py1 - PUMP_UP_SHIFT - PUMP[1], P_Z[1], P_Z[2]), 'shell', 'shell_upper')
     return K
 
 def bays():
-    """interior regions for fill %: (body, cq region box) - intersected with the cavity by the checker"""
+    """interior regions for fill % (intersected with each body's cavity by the checker)"""
     return {
         'tub_lower':   ('tub',   bx(XRI - 1, J_TUB, -WI, WI, FLOOR, DECK_Z0)),
-        'tub_upper':   ('tub',   bx(XRI - 1, J_TUB, -WI, WI, DECK_Z1, TOP_T)),
-        'shell_lower': ('shell', bx(J_SH, S2_X0 - DIV, -WI, WI, FLOOR, DECK_Z0)),
-        'shell_upper': ('shell', bx(J_SH, S2_X0 - DIV, -WI, WI, DECK_Z1, TOP_S)),
-        'nose':        ('shell', bx(S2_X0, NOSE_I, -WI, WI, S2_FLOOR, TOP_S)),
+        'tub_upper':   ('tub',   bx(XRI - 1, J_TUB, -WI, WI, DECK_Z0, H_IN)),
+        'shell_lower': ('shell', bx(J_SH, NOSE_I + 1, -WI, WI, FLOOR, DECK_Z0)),
+        'shell_upper': ('shell', bx(J_SH, S2_X0 - DIV, -WI, WI, DECK_Z0, H_IN)),
+        'nose':        ('shell', bx(S2_X0, NOSE_I + 1, -WI, WI, DECK_Z0, H_IN)),
     }
 
 def cavities():
-    plan_i = rrect(XRI, J_TUB + 1, -WI, WI, tuple(max(0.5, r - T) for r in R_TUB))
-    _, _, tc = hollow(tub_profile(), TOP_T, rrect(XRO, J_TUB + 1, -W, W, R_TUB), plan_i, profile_tall=tub_profile(TOP_T + 20))
-    plan_i = rrect(J_SH - 1, NOSE_I, -WI, WI, tuple(max(0.5, r - T) for r in R_SH))
-    _, _, sc = hollow(shell_profile(), TOP_S, rrect(J_SH - 1, NOSE, -W, W, R_SH), plan_i, profile_tall=shell_profile(TOP_S + 20, chamfer=0.01))
-    return {'tub': tc.intersect(bx(-200, 200, -200, 200, -10, TOP_T)), 'shell': sc.intersect(bx(-200, 300, -200, 200, -10, TOP_S))}
+    po, pi = tub_plans(); _, tc = body(tub_profile(), po, pi)
+    po, pi = shell_plans(); _, sc = body(shell_profile(), po, pi)
+    return {'tub': tc, 'shell': sc}
 
 # ---------------- build + export ----------------
 PRINT1 = ('main_tub', 'front_shell')
-PRINT2 = ('lid_tub', 'lid_shell', 'tank_hatch', 'tub_deck', 'shell_deck', 'lidar_mount')
-BUILDERS = dict(main_tub=main_tub, front_shell=front_shell, lid_tub=lid_tub, lid_shell=lid_shell, tank_hatch=tank_hatch,
-                tub_deck=tub_deck, shell_deck=shell_deck, lidar_mount=lidar_mount)
-BODY_OF = dict(main_tub='tub', lid_tub='tub', tub_deck='tub', lidar_mount='tub',
-               front_shell='shell', lid_shell='shell', tank_hatch='shell', shell_deck='shell')
-# how each print-2 part lies on the bed: rotation about X in degrees (lids and hatch print top-down)
-BED_FLIP = dict(lid_tub=180, lid_shell=180, tank_hatch=180, tub_deck=0, shell_deck=0, lidar_mount=0)
+PRINT2 = ('tub_cap', 'shell_cap', 'tank_hatch', 'tub_deck', 'tub_shelf', 'pump_deck', 'lidar_mount')
+BUILDERS = dict(main_tub=main_tub, front_shell=front_shell, tub_cap=tub_cap, shell_cap=shell_cap, tank_hatch=tank_hatch,
+                tub_deck=tub_deck, tub_shelf=tub_shelf, pump_deck=pump_deck, lidar_mount=lidar_mount)
+BODY_OF = dict(main_tub='tub', tub_cap='tub', tub_deck='tub', tub_shelf='tub', lidar_mount='tub',
+               front_shell='shell', shell_cap='shell', tank_hatch='shell', pump_deck='shell')
+BED_FLIP = dict(tub_cap=180, shell_cap=180, tank_hatch=180, tub_deck=0, tub_shelf=180, pump_deck=0, lidar_mount=0)
 
 def summary():
-    return dict(XRO=XRO, NOSE=NOSE, TOP_T=TOP_T, TOP_S=TOP_S, OPI=(OPI_X0, OPI_X1, OPI_Y0, OPI_Y1), BOARD=(BOARD_X0, BOARD_X1, BOARD_Z0, BOARD_Z1),
-                S2_X0=S2_X0, slots=dict(esp=ESP_SLOT, bat=BAT_SLOT, nine=NINE_SLOT, tank=TANK_SLOT), lidar_cx=LIDAR['cx'],
-                scan_plane=TOP_T + LID_T + LIDAR['plate'] + LIDAR['scan'])
+    return dict(version='v2', XRO=XRO, NOSE=NOSE, H=H, TOP_T=H, TOP_S=H, Z_SPLIT=Z_SPLIT, length=round(NOSE - XRO, 1),
+                nose_overhang=round(NOSE - WHEEL_FRONT, 1), wheel_front=WHEEL_FRONT, ramp_x0=RAMP_X0,
+                OPI=(OPI_X0, OPI_X1, OPI_Y0, OPI_Y1), BOARD=(BOARD_X0, BOARD_X1, BOARD_Z0, BOARD_Z1), S2_X0=S2_X0,
+                slots=dict(esp=ESP_SLOT, bat=BAT_SLOT, nine=NINE_SLOT, tank=TANK_SLOT), lidar_cx=LIDAR['cx'],
+                scan_plane=H + LIDAR['plate'] + LIDAR['scan'], servo=dict(x1=SERVO_X1, z0=SERVO_Z0, shaft_x=SERVO_SHAFT_X, arm_window=ARM_WIN, wheel_x_at_arm=round(ARM_WHEEL_X, 1)),
+                esp_z=(ESP_Z0, ESP_Z1))
 
 def export_all(outdir='out'):
+    import trimesh
     os.makedirs(outdir, exist_ok=True)
+    for f in os.listdir(outdir):
+        if f.endswith('.stl') or f.endswith('.step'):
+            os.remove(os.path.join(outdir, f))                       # no stale parts from older versions
     parts = {}
-    for name, fn in BUILDERS.items():
-        s = fn(); parts[name] = s
+    for name in PRINT1 + PRINT2:
+        s = BUILDERS[name](); parts[name] = s
         cq.exporters.export(s, f'{outdir}/{name}.stl', tolerance=0.05, angularTolerance=0.15)
         cq.exporters.export(s, f'{outdir}/{name}.step')
-        import trimesh
         mm = trimesh.load(f'{outdir}/{name}.stl')
         print(' built', name, round(s.val().Volume() / 1000, 1), 'cm3', 'solids', len(s.solids().vals()),
               'valid', s.val().isValid(), 'watertight', mm.is_watertight)
     comps = components()
     os.makedirs(f'{outdir}/comp', exist_ok=True)
-    for name, (s, body, bay, m, src) in comps.items():
+    for f in os.listdir(f'{outdir}/comp'):
+        os.remove(os.path.join(f'{outdir}/comp', f))
+    for name, (s, body, bay, m, src, seat) in comps.items():
         cq.exporters.export(s, f'{outdir}/comp/{name}.stl', tolerance=0.1, angularTolerance=0.3)
     for name, (s, body, bay) in keepouts().items():
         cq.exporters.export(s, f'{outdir}/comp/keepout_{name}.stl', tolerance=0.1, angularTolerance=0.3)
     meta = dict(summary=summary(), body_of=BODY_OF, print1=PRINT1, print2=PRINT2, bed_flip=BED_FLIP,
-                components={k: dict(body=v[1], bay=v[2], mass=v[3], src=v[4]) for k, v in comps.items()},
+                components={k: dict(body=v[1], bay=v[2], mass=v[3], src=v[4], seat=v[5]) for k, v in comps.items()},
                 keepouts={k: dict(body=v[1], bay=v[2]) for k, v in keepouts().items()},
                 hinge=dict(x=XH, z=ZH, gap=GAP, rake=RAKE, sweep=SWEEP))
     with open(f'{outdir}/meta.json', 'w') as f:
@@ -594,12 +666,12 @@ def export_all(outdir='out'):
     return parts
 
 BED, BED_GAP = 256.0, 3.0
+P1S_EXCL = (18.0, 28.0)             # P1S bed_exclude_area: front-left corner X 0-18, Y 0-28 must stay empty
 def print_layouts(meshes):
     """meshes: name -> trimesh in the model frame. Returns {1: [(name, mesh on bed)], 2: [...]}.
     Print 1: tub + shell exactly as assembled at 0 deg, belly down, centred.
-    Print 2: hand-placed (a rectangle packer gave up at 77% bed cover):
-      column A - shell lid, tub lid (both top-down, turned 90 deg), then hatch + LiDAR plate in the strip below;
-      column B - pump deck, Pi deck."""
+    Print 2: hand-placed, column A = shell cap, tub cap, pump deck (caps top-down, turned 90 deg);
+             column B = Pi deck, board shelf, LiDAR plate + tank hatch."""
     import trimesh
     T_ = trimesh.transformations
     out = {1: [], 2: []}
@@ -616,13 +688,14 @@ def print_layouts(meshes):
         m.apply_translation([x - m.bounds[0][0], y - m.bounds[0][1], -m.bounds[0][2]])
         out[2].append((n, m)); return m.bounds[1]
     g, x0 = BED_GAP, 1.0
-    top = lay('lid_shell', 180, 90, x0, 1.0)
-    top = lay('lid_tub', 180, 90, x0, top[1] + g)
-    hx = lay('tank_hatch', 180, 0, x0, top[1] + g)
-    lay('lidar_mount', 0, 0, hx[0] + g, top[1] + g)
-    xb = max(m.bounds[1][0] for n, m in out[2] if n.startswith('lid')) + g
-    d = lay('shell_deck', 0, 0, xb, 1.0)
-    lay('tub_deck', 0, 0, xb, d[1] + g)
+    top = lay('shell_cap', 180, 90, x0, P1S_EXCL[1] + 1.5)        # starts above the P1S keep-out corner
+    top = lay('tub_cap', 180, 90, x0, top[1] + g)
+    lay('pump_deck', 0, 90, x0, top[1] + g)
+    xb = max(m.bounds[1][0] for n, m in out[2]) + g
+    top = lay('tub_deck', 0, 0, xb, 1.0)
+    top = lay('tub_shelf', 180, 0, xb, top[1] + g)
+    t2 = lay('lidar_mount', 0, 90, xb, top[1] + g)
+    lay('tank_hatch', 180, 0, t2[0] + g, top[1] + g)
     return out
 
 def export_prints(outdir='out', dest='.'):
@@ -630,7 +703,7 @@ def export_prints(outdir='out', dest='.'):
     import trimesh
     meshes = {n: trimesh.load(f'{outdir}/{n}.stl') for n in PRINT1 + PRINT2}
     L = print_layouts(meshes)
-    names = {1: 'FPMS_Rover1_Print1_Chassis_Assembled.stl', 2: 'FPMS_Rover1_Print2_Lids_Decks_LiDAR.stl'}
+    names = {1: 'FPMS_Rover1_Print1_Chassis_Assembled.stl', 2: 'FPMS_Rover1_Print2_Caps_Decks_LiDAR.stl'}
     for k in (1, 2):
         m = trimesh.util.concatenate([mm for _, mm in L[k]])
         m.export(f'{dest}/{names[k]}'); print(names[k], m.extents.round(1), 'bed max', m.bounds[1].round(1))

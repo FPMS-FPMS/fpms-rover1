@@ -1,0 +1,484 @@
+{
+ "overlaps": [],
+ "clearance_mm": {
+  "motor_rear_L": 0.01,
+  "motor_rear_R": 0.01,
+  "motor_front_L": 0.01,
+  "motor_front_R": 0.01,
+  "orange_pi_n515": 0.03,
+  "yahboom_board": 0.0,
+  "estop_body": 0.0,
+  "regulator_5v": 0.0,
+  "lidar_d500": 0.07,
+  "pump_1": 0.09,
+  "pump_2": 0.09,
+  "tank_water": 0.02,
+  "battery_3s2p": 0.03,
+  "nine_volt_1": 0.04,
+  "nine_volt_2": 0.5,
+  "esp32_s3": 0.03,
+  "xy_mos_1": 0.01,
+  "xy_mos_2": 0.01,
+  "vl53l0x": 0.02,
+  "servo_mg90s": 0.01
+ },
+ "hinge_sweep": {
+  "free_from": -1.5,
+  "free_to": 20.25,
+  "nose_down_stop_deg": -1.75,
+  "nose_up_stop_deg": 20.5,
+  "samples": [
+   [
+    -3.0,
+    93.77
+   ],
+   [
+    -2.0,
+    11.76
+   ],
+   [
+    -1.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.0
+   ],
+   [
+    1.0,
+    0.0
+   ],
+   [
+    2.0,
+    0.0
+   ],
+   [
+    3.0,
+    0.0
+   ],
+   [
+    4.0,
+    0.0
+   ],
+   [
+    5.0,
+    0.0
+   ],
+   [
+    6.0,
+    0.0
+   ],
+   [
+    7.0,
+    0.0
+   ],
+   [
+    8.0,
+    0.0
+   ],
+   [
+    9.0,
+    0.0
+   ],
+   [
+    10.0,
+    0.0
+   ],
+   [
+    11.0,
+    0.0
+   ],
+   [
+    12.0,
+    0.0
+   ],
+   [
+    13.0,
+    0.0
+   ],
+   [
+    14.0,
+    0.0
+   ],
+   [
+    15.0,
+    0.0
+   ],
+   [
+    16.0,
+    0.0
+   ],
+   [
+    17.0,
+    0.0
+   ],
+   [
+    18.0,
+    0.0
+   ],
+   [
+    19.0,
+    0.0
+   ],
+   [
+    20.0,
+    0.0
+   ],
+   [
+    21.0,
+    4133.79
+   ],
+   [
+    22.0,
+    12072.74
+   ]
+  ]
+ },
+ "print1_min_gap_mm": 0.396,
+ "wheel_to_body_mm": {
+  "wheel_rear_L": 2.0,
+  "wheel_rear_R": 2.0,
+  "wheel_front_L": 2.0,
+  "wheel_front_R": 2.0
+ },
+ "print1_extent": [
+  238.7,
+  162.6,
+  110.0
+ ],
+ "print2_extent": [
+  234.0,
+  249.2,
+  20.1
+ ],
+ "print2_bed_max": [
+  235.0,
+  250.2,
+  20.1
+ ],
+ "print2_missing": [],
+ "print2_fits": true,
+ "print1_on_bed": {
+  "min": [
+   8.7,
+   46.7,
+   0.0
+  ],
+  "max": [
+   247.3,
+   209.3,
+   110.0
+  ]
+ },
+ "print2_area_pct": 75.8,
+ "fill_v1": {
+  "tub_lower": {
+   "bay_cm3": 432.5,
+   "parts_cm3": 122.6,
+   "keepout_cm3": 0.0,
+   "fill_pct": 28.3,
+   "used_pct": 28.3
+  },
+  "tub_upper": {
+   "bay_cm3": 672.8,
+   "parts_cm3": 366.4,
+   "keepout_cm3": 109.1,
+   "fill_pct": 54.5,
+   "used_pct": 70.7
+  },
+  "shell_lower": {
+   "bay_cm3": 440.5,
+   "parts_cm3": 130.3,
+   "keepout_cm3": 0.0,
+   "fill_pct": 29.6,
+   "used_pct": 29.6
+  },
+  "shell_upper": {
+   "bay_cm3": 605.8,
+   "parts_cm3": 400.0,
+   "keepout_cm3": 120.0,
+   "fill_pct": 66.0,
+   "used_pct": 85.8
+  },
+  "nose": {
+   "bay_cm3": 585.4,
+   "parts_cm3": 440.5,
+   "keepout_cm3": 0.0,
+   "fill_pct": 75.2,
+   "used_pct": 75.2
+  },
+  "TOTAL": {
+   "bay_cm3": 2737.0,
+   "parts_cm3": 1459.8,
+   "fill_pct": 53.3,
+   "used_pct": 61.7
+  }
+ },
+ "fill_v0": {
+  "tub_lower": {
+   "bay_cm3": 364.5,
+   "parts_cm3": 122.6,
+   "fill_pct": 33.6
+  },
+  "tub_upper": {
+   "bay_cm3": 644.7,
+   "parts_cm3": 366.4,
+   "fill_pct": 56.8
+  },
+  "shell_lower": {
+   "bay_cm3": 300.4,
+   "parts_cm3": 116.4,
+   "fill_pct": 38.8
+  },
+  "shell_upper": {
+   "bay_cm3": 531.4,
+   "parts_cm3": 325.4,
+   "fill_pct": 61.2
+  },
+  "nose": {
+   "bay_cm3": 616.1,
+   "parts_cm3": 528.0,
+   "fill_pct": 85.7
+  },
+  "TOTAL": {
+   "bay_cm3": 2457.1,
+   "parts_cm3": 1458.8,
+   "fill_pct": 59.4
+  }
+ },
+ "hinge_gap_dead_cm3": {
+  "v0": 515.8,
+  "v1": 168.1
+ },
+ "envelope": {
+  "v0_len": 206.0,
+  "v1_len": 238.7,
+  "v0_top": 137.3,
+  "v1_top_tub": 138.4,
+  "v1_top_shell": 121.4
+ },
+ "hull_cm3": {
+  "v0": 3537.0,
+  "v1": 3762.5
+ },
+ "mass": {
+  "total_g": 2645,
+  "cg_x": 68.9,
+  "cg_z": 69.4,
+  "front_axle_pct": 73.7,
+  "shell_g": 1530,
+  "shell_cg_x": 122.5,
+  "shell_closing_moment_Nmm": 1111.1,
+  "printed_petg_g": 663,
+  "items": [
+   [
+    "main_tub",
+    "tub",
+    229,
+    3.0
+   ],
+   [
+    "front_shell",
+    "shell",
+    294,
+    119.0
+   ],
+   [
+    "lid_tub",
+    "tub",
+    27,
+    -17.8
+   ],
+   [
+    "lid_shell",
+    "shell",
+    55,
+    114.4
+   ],
+   [
+    "tank_hatch",
+    "shell",
+    6,
+    156.8
+   ],
+   [
+    "tub_deck",
+    "tub",
+    17,
+    -9.3
+   ],
+   [
+    "shell_deck",
+    "shell",
+    19,
+    92.9
+   ],
+   [
+    "lidar_mount",
+    "tub",
+    14,
+    -17.6
+   ],
+   [
+    "motor_rear_L",
+    "tub",
+    150,
+    0.0
+   ],
+   [
+    "wheel_rear_L",
+    "tub",
+    60,
+    0.0
+   ],
+   [
+    "motor_rear_R",
+    "tub",
+    150,
+    0.0
+   ],
+   [
+    "wheel_rear_R",
+    "tub",
+    60,
+    0.0
+   ],
+   [
+    "motor_front_L",
+    "shell",
+    150,
+    93.5
+   ],
+   [
+    "wheel_front_L",
+    "shell",
+    60,
+    93.5
+   ],
+   [
+    "motor_front_R",
+    "shell",
+    150,
+    93.5
+   ],
+   [
+    "wheel_front_R",
+    "shell",
+    60,
+    93.5
+   ],
+   [
+    "orange_pi_n515",
+    "tub",
+    200,
+    -10.6
+   ],
+   [
+    "yahboom_board",
+    "tub",
+    50,
+    -17.2
+   ],
+   [
+    "estop_body",
+    "tub",
+    60,
+    -24.1
+   ],
+   [
+    "regulator_5v",
+    "tub",
+    5,
+    26.8
+   ],
+   [
+    "lidar_d500",
+    "tub",
+    42,
+    -17.2
+   ],
+   [
+    "pump_1",
+    "shell",
+    75,
+    71.6
+   ],
+   [
+    "pump_2",
+    "shell",
+    75,
+    114.2
+   ],
+   [
+    "tank_water",
+    "shell",
+    125,
+    156.8
+   ],
+   [
+    "battery_3s2p",
+    "shell",
+    310,
+    161.8
+   ],
+   [
+    "nine_volt_1",
+    "shell",
+    30,
+    161.1
+   ],
+   [
+    "nine_volt_2",
+    "shell",
+    30,
+    161.1
+   ],
+   [
+    "esp32_s3",
+    "shell",
+    10,
+    149.5
+   ],
+   [
+    "xy_mos_1",
+    "shell",
+    8,
+    116.6
+   ],
+   [
+    "xy_mos_2",
+    "shell",
+    8,
+    116.6
+   ],
+   [
+    "vl53l0x",
+    "shell",
+    1,
+    180.3
+   ],
+   [
+    "servo_mg90s",
+    "shell",
+    13,
+    169.7
+   ],
+   [
+    "wiring+screws (estimate)",
+    "tub",
+    50,
+    0.0
+   ],
+   [
+    "wiring+tubes (estimate)",
+    "shell",
+    50,
+    100.0
+   ]
+  ]
+ },
+ "hinge_overhang_mm2": {
+  "main_tub": 0.0,
+  "front_shell": 0.0
+ }
+}

@@ -1,0 +1,251 @@
+{
+ "summary": {
+  "XRO": -49,
+  "NOSE": 189.7,
+  "TOP_T": 136,
+  "TOP_S": 119,
+  "OPI": [
+   -43.12091569383239,
+   21.879084306167616,
+   -65.5,
+   27.299999999999997
+  ],
+  "BOARD": [
+   -45.22200783895155,
+   10.777992161048452,
+   114.7,
+   134.7
+  ],
+  "S2_X0": 136.29999999999998,
+  "slots": {
+   "esp": [
+    -71.6,
+    -57.599999999999994
+   ],
+   "bat": [
+    -56.39999999999999,
+    9.600000000000009
+   ],
+   "nine": [
+    10.800000000000008,
+    29.300000000000008
+   ],
+   "tank": [
+    30.500000000000007,
+    71.6
+   ]
+  },
+  "lidar_cx": -17.22,
+  "scan_plane": 169.4
+ },
+ "body_of": {
+  "main_tub": "tub",
+  "lid_tub": "tub",
+  "tub_deck": "tub",
+  "lidar_mount": "tub",
+  "front_shell": "shell",
+  "lid_shell": "shell",
+  "tank_hatch": "shell",
+  "shell_deck": "shell"
+ },
+ "print1": [
+  "main_tub",
+  "front_shell"
+ ],
+ "print2": [
+  "lid_tub",
+  "lid_shell",
+  "tank_hatch",
+  "tub_deck",
+  "shell_deck",
+  "lidar_mount"
+ ],
+ "bed_flip": {
+  "lid_tub": 180,
+  "lid_shell": 180,
+  "tank_hatch": 180,
+  "tub_deck": 0,
+  "shell_deck": 0,
+  "lidar_mount": 0
+ },
+ "components": {
+  "motor_rear_L": {
+   "body": "tub",
+   "bay": "tub_lower",
+   "mass": 150,
+   "src": "team"
+  },
+  "wheel_rear_L": {
+   "body": "wheel",
+   "bay": null,
+   "mass": 60,
+   "src": "estimate"
+  },
+  "motor_rear_R": {
+   "body": "tub",
+   "bay": "tub_lower",
+   "mass": 150,
+   "src": "team"
+  },
+  "wheel_rear_R": {
+   "body": "wheel",
+   "bay": null,
+   "mass": 60,
+   "src": "estimate"
+  },
+  "motor_front_L": {
+   "body": "shell",
+   "bay": "shell_lower",
+   "mass": 150,
+   "src": "team"
+  },
+  "wheel_front_L": {
+   "body": "wheel",
+   "bay": null,
+   "mass": 60,
+   "src": "estimate"
+  },
+  "motor_front_R": {
+   "body": "shell",
+   "bay": "shell_lower",
+   "mass": 150,
+   "src": "team"
+  },
+  "wheel_front_R": {
+   "body": "wheel",
+   "bay": null,
+   "mass": 60,
+   "src": "estimate"
+  },
+  "orange_pi_n515": {
+   "body": "tub",
+   "bay": "tub_upper",
+   "mass": 200,
+   "src": "estimate (Pi 5 Max + metal case)"
+  },
+  "yahboom_board": {
+   "body": "tub",
+   "bay": "tub_upper",
+   "mass": 50,
+   "src": "estimate"
+  },
+  "estop_body": {
+   "body": "tub",
+   "bay": "tub_upper",
+   "mass": 60,
+   "src": "estimate"
+  },
+  "estop_head": {
+   "body": "tub",
+   "bay": null,
+   "mass": 0,
+   "src": ""
+  },
+  "regulator_5v": {
+   "body": "tub",
+   "bay": "tub_lower",
+   "mass": 5,
+   "src": "Pololu"
+  },
+  "lidar_d500": {
+   "body": "tub",
+   "bay": null,
+   "mass": 42,
+   "src": "LD19 datasheet"
+  },
+  "pump_1": {
+   "body": "shell",
+   "bay": "shell_upper",
+   "mass": 75,
+   "src": "estimate"
+  },
+  "pump_2": {
+   "body": "shell",
+   "bay": "shell_upper",
+   "mass": 75,
+   "src": "estimate"
+  },
+  "tank_water": {
+   "body": "shell",
+   "bay": "nose",
+   "mass": 125,
+   "src": "estimate (tank ~30 g + ~95 ml water)"
+  },
+  "battery_3s2p": {
+   "body": "shell",
+   "bay": "nose",
+   "mass": 310,
+   "src": "team"
+  },
+  "nine_volt_1": {
+   "body": "shell",
+   "bay": "nose",
+   "mass": 30,
+   "src": "estimate"
+  },
+  "nine_volt_2": {
+   "body": "shell",
+   "bay": "nose",
+   "mass": 30,
+   "src": "estimate"
+  },
+  "esp32_s3": {
+   "body": "shell",
+   "bay": "nose",
+   "mass": 10,
+   "src": "estimate"
+  },
+  "xy_mos_1": {
+   "body": "shell",
+   "bay": "shell_lower",
+   "mass": 8,
+   "src": "estimate"
+  },
+  "xy_mos_2": {
+   "body": "shell",
+   "bay": "shell_lower",
+   "mass": 8,
+   "src": "estimate"
+  },
+  "vl53l0x": {
+   "body": "shell",
+   "bay": "nose",
+   "mass": 1,
+   "src": "datasheet"
+  },
+  "servo_mg90s": {
+   "body": "shell",
+   "bay": null,
+   "mass": 13,
+   "src": "datasheet"
+  }
+ },
+ "keepouts": {
+  "pi_plug_zone": {
+   "body": "tub",
+   "bay": "tub_upper"
+  },
+  "pi_fan_air": {
+   "body": "tub",
+   "bay": "tub_upper"
+  },
+  "pump_1_bends": {
+   "body": "shell",
+   "bay": "shell_upper"
+  },
+  "pump_2_bends": {
+   "body": "shell",
+   "bay": "shell_upper"
+  }
+ },
+ "hinge": {
+  "x": 48.5,
+  "z": 40.0,
+  "gap": 0.4,
+  "rake": 20.0,
+  "sweep": [
+   -2.0,
+   21.0
+  ]
+ }
+}
