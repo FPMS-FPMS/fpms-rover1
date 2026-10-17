@@ -131,3 +131,36 @@ model mapping, the problems it found were:
 the surface a part rests on. The rule is now: ignore the designed seat plus a 0.6 mm band beside it, and fail anything
 under 0.4 mm. Under that rule it caught real touches: the ESP32 top against the cap's side round, the servo body on a
 motor pad, and the deck wall against the pumps.
+
+## 7. Final (approved 2026-10-17, no ballast)
+
+**Decisions.**
+- The team kept the ~150 mm top. A 140 mm top cannot be met with these parts and rules:
+  - Laid out in one layer, the big parts need about 17,900 mm² of floor against 14,750 available.
+  - Stacking any two of them needs about 82 mm above the deck.
+  - 90° elbow barbs on the pumps don't change that, so they were not bought.
+- No ballast. The front axle carries 61% (CG X 57, height 79 mm), and the shell still holds itself closed with 836 N·mm
+  about the hinge.
+
+**Slicer as a design tool.** Bambu Studio's command line found problems our own checks didn't:
+- a part inside the P1S's no-print corner;
+- walls starting in mid-air;
+- flat hole roofs;
+- a floating ledge.
+
+Each one was traced back from bed coordinates to the model and fixed. Final slice (P1S, PETG, 0.20 mm Strength, no
+supports, no warnings):
+
+| Print | Time | Filament |
+|---|---|---|
+| 1 | 15 h 19 m | 449.7 g |
+| 2 | 4 h 50 m | 133.7 g |
+
+Forcing supports on adds only about 1 g, all in the first 6 layers. Nothing lands between the hinge knuckles.
+
+**Lesson for the report.** Three independent checks found different things:
+- `checks.py` covered geometry and fit;
+- the printability audit covered overhangs, islands and thin walls;
+- the slicer covered what the printer will actually do.
+
+None of them alone was enough.
