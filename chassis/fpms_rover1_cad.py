@@ -299,7 +299,7 @@ def cap_boss(w, x, y_wall, into, along='x'):
     return w.union(g).cut(cyl_z(hx, hy, 1.3, H_IN - 10, H_IN + 1)), (hx, hy)
 
 TUB_BOSSES, SHELL_BOSSES = [], []
-CABLE_PASS = Polygon([(-10, 33), (10, 33), (10, 47), (0, 57), (-10, 47)])   # YZ: 20 wide, 45 deg pointed roof
+CABLE_PASS = Polygon([(-10, 33), (10, 33), (10, 41), (0, 58.3), (-10, 41)])  # YZ: 20 wide, 60 deg pointed roof (no auto-support)
 
 def deck_post(w, x, y, ztop, floor_z=FLOOR):
     w = w.union(bx(x - 2.5, x + 2.5, y - 2.5, y + 2.5, floor_z - 0.5, ztop))
@@ -403,7 +403,7 @@ def front_shell():
     f = f.union(bx(tx1, tx1 + DIV, TANK_SLOT[0], WI + 0.5, TANK_Z0 - 4, H_IN).intersect(cav))
     # ESP32: ledges on both slot walls carry it above the servo; USB-C comes up to the cap slot
     ez0 = ESP_Z0 - 0.0
-    for s, yw in ((+1, ESP_SLOT[0]), (-1, ESP_SLOT[1])):
+    for s, yw in ((+1, ESP_SLOT[0]),):              # right wall only: the slot divider starts ahead of the motors
         y0, y1 = sorted((yw, yw + s * 2.5))
         f = f.union(ledge(S2_X0 + 1, SERVO_X1 - SERVO['body'][0] - CLR, y0, y1, ez0, d=2.5, axis='y', into=s))
     # servo holder: two posts under the ears with M2 pilots, body pocket between them
