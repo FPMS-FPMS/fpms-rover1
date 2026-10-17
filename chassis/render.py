@@ -75,10 +75,26 @@ def section(scene, outdir, prefix, normal, origin, label, xlim=None, ylim=None):
         sec = m.section(plane_origin=origin, plane_normal=ax_n)
         col = s.get('color', (0.4, 0.4, 0.4)); solid = s.get('opacity', 1) > 0.6
         if sec is not None:
+            if solid:   # fill as polygons-with-holes (even-odd), so pockets inside a wall stay empty
+                from matplotlib.path import Path
+                from matplotlib.patches import PathPatch
+                from shapely.geometry import Polygon as SPoly
+                loops = [sec.vertices[ent.points][:, pick] for ent in sec.entities]
+                loops = [p for p in loops if len(p) >= 3]
+                sp = [SPoly(p).buffer(0) for p in loops]
+                verts, codes = [], []
+                for i, p in enumerate(loops):
+                    rp = sp[i].representative_point() if not sp[i].is_empty else None
+                    depth = sum(1 for j in range(len(loops)) if j != i and rp is not None and sp[j].area > sp[i].area and sp[j].contains(rp))
+                    a = 0.5 * np.sum(p[:-1, 0] * p[1:, 1] - p[1:, 0] * p[:-1, 1])
+                    if (a > 0) != (depth % 2 == 0):      # outlines CCW, holes CW -> nonzero fill leaves holes empty
+                        p = p[::-1]
+                    verts += p.tolist(); codes += [Path.MOVETO] + [Path.LINETO] * (len(p) - 1)
+                if verts:
+                    pp = Path(verts, codes)
+                    ax.add_patch(PathPatch(pp, facecolor=col, alpha=0.55, lw=0, fill=True))
             for ent in sec.entities:
                 p = sec.vertices[ent.points][:, pick]
-                if solid:
-                    ax.fill(p[:, 0], p[:, 1], color=col, alpha=0.55, lw=0)
                 ax.plot(p[:, 0], p[:, 1], color=col, lw=1.2 if solid else 1.0, ls='-' if solid else '--')
         ax.plot([], [], color=col, label=s.get('name', ''), ls='-' if solid else '--')
     if normal == 'x':
