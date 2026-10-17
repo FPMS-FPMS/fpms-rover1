@@ -186,7 +186,7 @@ cav = C.cavities(); bays = C.bays()
 fill = {}
 for bn, (body, region) in bays.items():
     bv = cav[body].intersect(region).val().Volume() / 1000
-    cv = sum(abs(comps[c].volume) for c, d in meta['components'].items() if d['bay'] == bn) / 1000
+    cv = sum(abs(comps[c].volume) for c, d in meta['components'].items() if d['bay'] == bn and not str(d['src']).startswith('optional')) / 1000
     kv = sum(abs(keeps[k].volume) for k, d in meta['keepouts'].items() if d['bay'] == bn) / 1000
     fill[bn] = dict(bay_cm3=round(bv, 1), parts_cm3=round(cv, 1), keepout_cm3=round(kv, 1),
                     fill_pct=round(100 * cv / bv, 1), used_pct=round(100 * (cv + kv) / bv, 1))
@@ -228,8 +228,9 @@ R['hinge_gap_dead_cm3'] = dict(v0=round(32.0 * 148 * (134.9 - 26) / 1000, 1),
 mass = []
 for n, m in parts.items():
     mass.append((n, meta['body_of'][n], abs(m.volume) / 1000 * PETG, m.center_mass))
+OPTIONAL = {n for n, d in meta['components'].items() if str(d['src']).startswith('optional')}
 for n, d in meta['components'].items():
-    if d['mass']:
+    if d['mass'] and n not in OPTIONAL:
         mass.append((n, d['body'] if d['body'] != 'wheel' else ('tub' if 'rear' in n else 'shell'), d['mass'], comps[n].center_mass))
 mass.append(('wiring+screws (estimate)', 'tub', 50.0, np.array([0.0, 0, 80])))
 mass.append(('wiring+tubes (estimate)', 'shell', 50.0, np.array([100.0, 0, 90])))
@@ -240,6 +241,14 @@ R['mass'] = dict(total_g=round(M), cg_x=round(X, 1), cg_z=round(Z, 1), front_axl
                  printed_petg_g=round(sum(g for n, _, g, _ in mass if n in parts)),
                  items=[(n, b, round(g), round(float(c[0]), 1)) for n, b, g, c in mass])
 R['compare']['v2']['front_axle'] = R['mass']['front_axle_pct']
+bal = [(n, meta['components'][n]['mass'], comps[n].center_mass) for n in sorted(OPTIONAL)]
+if bal:
+    Mb = M + sum(g for _, g, _ in bal); Xb = (X * M + sum(g * c[0] for _, g, c in bal)) / Mb
+    Zb = (Z * M + sum(g * c[2] for _, g, c in bal)) / Mb
+    xb = sum(g * c[0] for _, g, c in bal) / sum(g for _, g, _ in bal)
+    R['mass']['with_ballast'] = dict(ballast_g=round(sum(g for _, g, _ in bal)), total_g=round(Mb), cg_x=round(Xb, 1), cg_z=round(Zb, 1),
+                                     front_axle_pct=round(100 * Xb / 93.5, 1),
+                                     need_for_65=round((0.65 * 93.5 * M - X * M) / (xb - 0.65 * 93.5)))
 
 # ---------- 8. hinge printability ----------
 def overhang_area(mesh, zone):
@@ -248,6 +257,8 @@ def overhang_area(mesh, zone):
     return float(mesh.area_faces[sel].sum())
 zone = lambda c: (np.abs(c[:, 0] - H['x']) < 16) & (c[:, 2] < 62) & (np.abs(c[:, 1]) > 28)
 R['hinge_overhang_mm2'] = {n: round(overhang_area(parts[n], zone), 1) for n in ('main_tub', 'front_shell')}
+if max(R['hinge_overhang_mm2'].values()) > 1.0:                 # nothing in the hinge may need support
+    hard_fail.append(f"steep overhang in the hinge zone {R['hinge_overhang_mm2']}")
 
 json.dump(R, open(f'{OUT}/checks.json', 'w'), indent=1, default=float)
 
@@ -296,7 +307,13 @@ ms = R['mass']
 L += ['## Weight and balance (estimates marked in meta.json)', '',
       f"- total {ms['total_g']} g, printed PETG ~{ms['printed_petg_g']} g (solid-volume estimate; the slicer number replaces it)",
       f"- CG at X {ms['cg_x']} (front axle carries **{ms['front_axle_pct']}%**, target 70%), CG height {ms['cg_z']} mm",
-      f"- front shell {ms['shell_g']} g with CG at X {ms['shell_cg_x']}: {ms['shell_closing_moment_Nmm']} N.mm holds it closed about the hinge", '']
+      f"- front shell {ms['shell_g']} g with CG at X {ms['shell_cg_x']}: {ms['shell_closing_moment_Nmm']} N.mm holds it closed about the hinge"]
+if 'with_ballast' in ms:
+    wb = ms['with_ballast']
+    L += [f"- optional ballast (steel shot in epoxy, low in the nose under the battery, room for {wb['ballast_g']} g): "
+          f"front axle **{wb['front_axle_pct']}%**, CG X {wb['cg_x']} / height {wb['cg_z']} mm, total {wb['total_g']} g; "
+          f"{wb['need_for_65']} g of it reaches 65%"]
+L += ['']
 open('CHECKS.md', 'w').write('\n'.join(L) + '\n')
 print('\n'.join(L))
 sys.exit(1 if hard_fail else 0)

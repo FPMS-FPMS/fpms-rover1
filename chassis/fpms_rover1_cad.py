@@ -219,7 +219,8 @@ def knuckle2d():                             # rearward part chamfered 45 deg un
 def cap_up(r):                               # teardrop roof for a cylindrical pocket about the hinge axis
     return Polygon([(XH - r / math.sqrt(2), ZH + r / math.sqrt(2)), (XH, ZH + r * math.sqrt(2)), (XH + r / math.sqrt(2), ZH + r / math.sqrt(2))])
 def shell_bore2d():                          # pin seen from the shell moves by -theta
-    tip = affinity.translate(pin2d(), 0, -0.45).buffer(GAP, 32).intersection(sbox(XH - 4, ZH - 20, XH + 4, ZH - PIN_R))
+    # extra 0.45 under the V tip: the pin's own outline moved down, clipped at the pin centre so no flat roof is left
+    tip = affinity.translate(pin2d(), 0, -0.45).buffer(GAP, 32).intersection(sbox(XH - 20, ZH - 20, XH + 20, ZH))
     return unary_union([sweep2d(pin2d().buffer(GAP, 32), -1), sweep2d(tip, -1), cap_up(PIN_R + GAP)])
 def shell_cup_pocket2d():
     return unary_union([sweep2d(cup2d().buffer(GAP, 32), -1), cap_up(CUP_R + GAP)])
@@ -273,7 +274,9 @@ def motor_mount(w, xa):
         t0, t1 = sorted((s * 15.4, s * 23.6))                                                                 # strap block, encoder end
         blk = bx(xa - 14, xa + 14, t0, t1, FLOOR - 0.5, 44).cut(cyl_y(xa, ZGB, M_CAN_R + CLR, -100, 100))
         u0, u1 = sorted((s * 16.6, s * 22.4))
-        blk = blk.cut(bx(xa - 20, xa + 20, u0, u1, FLOOR - 0.6, ZGB - M_CAN_R + 3.0))                               # tie tunnel under the can
+        um = (u0 + u1) / 2                                                                                    # gable roof: no flat ceiling
+        blk = blk.cut(prism_x(Polygon([(u0, FLOOR - 0.6), (u1, FLOOR - 0.6), (u1, ZGB - M_CAN_R + 3.0),
+                                       (um, ZGB - M_CAN_R + 3.0 + (u1 - u0) / 2), (u0, ZGB - M_CAN_R + 3.0)]), xa - 20, xa + 20))                               # tie tunnel under the can
         w = w.union(blk)
     w = w.cut(cyl_y(xa, ZGB, M_GB_R + CLR, M_FACE - M_GB_L - 1, M_FACE + 0.01)).cut(
         cyl_y(xa, ZGB, M_GB_R + CLR, -M_FACE - 0.01, -(M_FACE - M_GB_L - 1)))                                 # trough so the gearbox clears the floor
@@ -321,8 +324,12 @@ def main_tub():
     t = t.union(ledge(XRI, XRI + 3, -WI + 10, OPI_Y1 - 4, DECK_Z0, axis='x', into=+1))
     t = t.union(ledge(XRI + 12, -PAD_HALF, -WI, -WI + 3, DECK_Z0, axis='y', into=+1))
     for (px, py) in ((XRI + 8.0, TUB_DECK_Y1 - 4.0), (TUB_DECK_X1 - 5.0, TUB_DECK_Y1 - 4.0)):
-        floor_here = FLOOR if px > TAIL_X - 2 else FLOOR + (TAIL_X - px) - 7      # sinks well into the sloped tail wall
-        t = deck_post(t, px, py, DECK_Z0, floor_here)
+        if px > TAIL_X - 2:
+            t = deck_post(t, px, py, DECK_Z0)
+        else:                                                                     # foot follows the 45 deg tail, inside the wall
+            outer = lambda x: BELLY + (TAIL_X - x) + 0.6
+            foot = Polygon([(px - 2.5, outer(px - 2.5)), (px + 2.5, outer(px + 2.5)), (px + 2.5, DECK_Z0), (px - 2.5, DECK_Z0)])
+            t = t.union(prism_y(foot, py - 2.5, py + 2.5)).union(cyl_z(px, py, 1.4, DECK_Z0 - 0.1, DECK_Z0 + 2.0))
     # board shelf ledges: right wall, rear wall, and a gusset on the raked front wall
     t = t.union(ledge(XRI + 10, tub_face_in(SHELF_Z0) - 1, -WI, -WI + 3, SHELF_Z0, axis='y', into=+1))
     t = t.union(ledge(XRI, XRI + 3, -WI + 10, BOARD_Y1 - 2, SHELF_Z0, axis='x', into=+1))
@@ -595,7 +602,16 @@ def components():
         bx(SERVO_EARS[0], SERVO_EARS[1], sy0, sy1, SERVO_Z0 + SERVO['ear_z'], SERVO_Z0 + SERVO['ear_z'] + 2.5)).union(
         cyl_z(SERVO_SHAFT_X, (sy0 + sy1) / 2, 2.4, SERVO_TOP - 0.01, SERVO_TOP + 4.0)), 'shell', 'nose', 13, 'datasheet',
         dict(ear_z=SERVO_Z0 + SERVO['ear_z']))
+    # optional ballast: steel shot in epoxy (~4.3 g/cm3) in the two free rib gaps under the battery, low and forward
+    for nm, (ya, yb) in BALLAST_GAPS.items():
+        g = bx(XF + M_GB_R + 2.0, NOSE_I, ya + CLR, yb - CLR, FLOOR, DECK_Z0 - CLR).intersect(
+            prism_y(shell_profile().buffer(-T - CLR, join_style=2), -W, W))
+        C[nm] = (g, 'shell', 'shell_lower', round(g.val().Volume() / 1000 * BALLAST_DENSITY), 'optional: steel shot in epoxy', None)
     return C
+
+BALLAST_GAPS = {'ballast_A': (-24.0 + 0.8, 2.0 - 0.8), 'ballast_B': (2.0 + 0.8, BAT_SLOT[1]),   # free gaps between ribs/dividers
+                'ballast_C': (BAT_SLOT[1] + DIV, sum(NINE_SLOT) / 2 - 0.8)}
+BALLAST_DENSITY = 4.3
 
 def keepouts():
     """space a component needs but does not fill: plugs, fan air, tube bends"""

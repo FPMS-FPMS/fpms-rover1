@@ -11,7 +11,7 @@
 | Top of body (LiDAR not included) | 137.3 mm | 138.4 mm | 151.5 mm |
 | Fill: component volume / bay volume | 59.5% | 53.3% | 50.4% |
 | Fill incl. plug, fan-air and tube-bend zones | - | 61.7% | 58.2% |
-| Space claimed (convex hull) | 3537.0 cm3 | 3762.5 cm3 | 3669.6 cm3 |
+| Space claimed (convex hull) | 3537.0 cm3 | 3762.5 cm3 | 3660.1 cm3 |
 | Weight on front axle | - | 73.7% | 61.2% |
 
 v0 numbers come from the original script; its pumps had no room to bend their tubes and its tank and E-stop zones were not reserved, so its fill is flattered.
@@ -53,7 +53,7 @@ Motor bosses run in Ø12.9 holes: 0.45 mm radial by construction.
 - moves freely from -1.75 to 20.0 deg (0.25 deg steps)
 - 0 deg catch touches at -2.0 deg; 20 deg stop at 20.25 deg
 - smallest gap between tub and shell as printed: 0.396 mm (target 0.4)
-- hinge-zone downward overhang steeper than 44 deg: {'main_tub': 0.0, 'front_shell': 34.6} mm2
+- hinge-zone downward overhang steeper than 44 deg: {'main_tub': 0.0, 'front_shell': 0.0} mm2
 
 ## Outline and curbs
 
@@ -93,7 +93,8 @@ Dead volume in the hinge gap: v0 515.8 cm3 -> v2 288.5 cm3
 
 ## Weight and balance (estimates marked in meta.json)
 
-- total 2663 g, printed PETG ~681 g (solid-volume estimate; the slicer number replaces it)
+- total 2662 g, printed PETG ~680 g (solid-volume estimate; the slicer number replaces it)
 - CG at X 57.2 (front axle carries **61.2%**, target 70%), CG height 79.4 mm
-- front shell 1514 g with CG at X 104.8: 835.9 N.mm holds it closed about the hinge
+- front shell 1514 g with CG at X 104.8: 835.8 N.mm holds it closed about the hinge
+- optional ballast (steel shot in epoxy, low in the nose under the battery, room for 129 g): front axle **64.7%**, CG X 60.5 / height 78.1 mm, total 2791 g; 141 g of it reaches 65%
 
