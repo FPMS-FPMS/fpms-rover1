@@ -164,3 +164,69 @@ Forcing supports on adds only about 1 g, all in the first 6 layers. Nothing land
 - the slicer covered what the printer will actually do.
 
 None of them alone was enough.
+
+## 8. v3 - the water system, built from scratch (2026-10-17)
+
+**The brief.** The team's v3 list added the missing functions to the approved v2: a fixed spray nozzle, a refill arm with
+its intake hose, a sealed wet zone with drains, every cable across the hinge, plus fixes (LiDAR clear of the lifted shell,
+ESP32 held on both edges, 4 mm wheel gap, E-stop guard, AS5600 hinge sensor, RGB bar, charging without opening the robot).
+v2 stays the fallback (tag `v2-approved`, STLs in `stl/v2/`). The team then asked for v3 to be researched and made from
+scratch with no further questions; every assumption is listed in PROGRESS.md.
+
+**Research first.** Two research passes (sources in PROGRESS.md / RESEARCH notes):
+- WRO 2026 Future Innovators General Rules §5.8: no mist, at most 1 L of clear water. A straight stream from a blunt
+  14 ga needle complies; a spray nozzle would not.
+- No size limit for Junior robots except the 2 x 2 x 2 m booth, so a taller body costs judging nothing.
+- R385 pump: no dimensioned drawing exists anywhere; listings agree on ~86-90 x 40 x 35 with axial barbs. Barb spacing is an assumption.
+- ESP32-S3-DevKitC-1 has no mounting holes (Espressif drawing), so it is held by its edges, clear of the header pins.
+- D500/LD19 scan plane is 27.0 mm above the base (two datasheets); no beam divergence is published, so 5 mm is allowed.
+
+**Why from scratch: a tube planner said no.** Hand-placing four 6x9 tubes with R25 bends was guesswork, so we wrote a
+planner: A* over positions and headings with straight steps, R25 quarter arcs, climbing helices and gentle ramps, with a
+distance field for clearance. Run on v2's packing it found **no route** for the spray inlet and refill outlet: every
+pump's bend lane ran into the 9 V cells or the tank. A rigid 20 deg nozzle also cannot sit over a 75 mm battery under a
+151.5 top. Routing one tube at a time then failed differently (each tube took a detour that blocked the next), so we used
+negotiated routing (the PathFinder method from FPGA design): all tubes routed together, overlaps penalised more each round.
+
+**The v3 layout.** Shell = wet side, tub = dry side.
+- Both pumps keep the stack over the front motors, but both now have their barbs to the RIGHT, turned on their axis so
+  the barbs are one above the other: every tube gets its own lane up the right wall.
+- Right third of the nose = plumbing bay: refill servo lying low at the front (shaft through the wall), ESP32 standing
+  above it in a drop-in carrier with C-rails on both edges and a splash wall, USB end up under an open slot in the cap.
+- Tank in the middle, lowered to Z 60.4 (its back sits over the motor can, its front over the slope).
+- Battery on the left with both 9 V cells lying on it in a cradle under the battery hatch: lift the hatch and the cells come up with it.
+- Nozzle centred, 15 deg down (brief: 15-25), tip 0.6 mm inside the nose face, over the tank's front gap.
+- Cost: the top rises 151.5 -> 163.0 on both halves (one top line kept). It is set by the nozzle line, the tank fittings, the 9 V stack
+  and one tube layer over the pumps.
+
+**What the v3 checker caught on its first run** (and was fixed): a tube routed straight through a 9 V cell (the planner
+had not been told about the cells), tubes passing over the ESP32, the nozzle cradle cutting into the battery's edge,
+fitting stubs through a wall with no passage, the 9 V cells' corners in the cap's inner round, the AS5600 chip with no
+pocket, and a pump-deck lip under the pump. It also caught that the ESP32 ledge printed into the shell made the servo
+impossible to fit: the ledge became a separate drop-in carrier.
+
+**Honest limit.** After smoothing (a bending-energy model of the tube, not a taut string), the tightest bends are about
+R19-R22 at a few short spots near the barbs, against the R25 target. CHECKS.md lists them; a spring kink guard goes there.
+
+**Second round: what made the checker honest, and what it then found.**
+- *Assembly is now proven, not assumed.* The old check pushed each part a fixed distance in a guessed direction. It now
+  searches for a straight path that takes every part completely out of the body (above the cap seam or out of the open
+  rear), against the printed parts present at that step and everything fitted before it. A sideways "6 mm" exit that
+  proved nothing was removed. The honest check then failed: **the Orange Pi could not be fitted at all** - lifting it hit
+  the raked front wall after 2 mm, sliding it back hit the deck's locating pins. Fix: the rear wall above the deck became a
+  separate **rear hatch** (it carries the E-stop and the charge jack, and the tub cap's two rear screws clamp it); the deck's
+  pins became flush posts with M3 self-tap pilots; the Pi is screwed to the deck on the bench and the pair slides in from
+  behind (the Pi's top corner passes 1.6 mm under the rake). The Yahboom board rides on its shelf the same way.
+- *Printed parts against each other were never checked.* Adding that found 7 overlaps (up to 84 mm3): every cap-boss column
+  rose into the caps' rounded inner top edges, as did the splash walls and the pump deck's wall corners - in v2 as well.
+  The caps and hatches are now cut by the body they sit on, and the pump deck is trimmed under the caps.
+- *The battery hatch had no fastener* once the front boss went (it would have blocked the battery). It now has a tab
+  reaching back to a boss on the left wall behind the battery bay; the pump deck is notched round it.
+- *The intake hose was modelled with a different length in each pose* (102 mm stowed, 161 mm deployed) - impossible for one
+  hose. It is now one length: clipped along the arm to 8 mm from the pivot (the horn screw head sets that), a 65 mm free
+  loop, and a wall gland moved to X 124, Z 116 by a search over gland positions. Its length varies 2.6 mm over the swing
+  and its tightest bend is R20.5 at the two ends (R27.7 mid-swing); a kink guard goes on the loop.
+- *Bambu refused Print 2* ("too close to exclusion area"): it tests the plate's 2D convex hull, not each part. The packer
+  now does the same, and the tank hatch moved to Print 3.
+- *Height is now derived from the 9 V stack too*: raising the battery 0.15 mm for clearance put the cells into the cap's
+  round, so the top is 163.0 (was 162.5).

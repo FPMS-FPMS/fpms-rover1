@@ -7,7 +7,7 @@ OUT = 'out_v3'; R = 'renders'; P = sys.argv[1] if len(sys.argv) > 1 else 'v3'
 meta = json.load(open(f'{OUT}/meta.json'))
 PART_COL = dict(main_tub=(0.45, 0.58, 0.78), front_shell=(0.86, 0.55, 0.38), tub_cap=(0.55, 0.75, 0.55), shell_cap=(0.55, 0.75, 0.55),
                 tank_hatch=(0.4, 0.6, 0.4), tub_deck=(0.85, 0.78, 0.35), tub_shelf=(0.85, 0.78, 0.35), pump_deck=(0.85, 0.78, 0.35),
-                lidar_mount=(0.3, 0.3, 0.3), batt_hatch=(0.75, 0.65, 0.35))
+                lidar_mount=(0.3, 0.3, 0.3), batt_hatch=(0.75, 0.65, 0.35), rear_hatch=(0.85, 0.85, 0.82), esp_carrier=(0.4, 0.55, 0.75))
 COMP_COL = {'motor': (0.2, 0.2, 0.25), 'wheel': (0.15, 0.15, 0.15), 'orange_pi': (0.9, 0.45, 0.1), 'yahboom': (0.1, 0.5, 0.9),
             'estop': (0.9, 0.1, 0.1), 'regulator': (0.2, 0.7, 0.2), 'lidar': (0.1, 0.1, 0.1), 'pump': (0.2, 0.6, 0.9),
             'tank': (0.3, 0.8, 1.0), 'battery': (0.95, 0.85, 0.1), 'nine': (0.7, 0.2, 0.8), 'esp32': (0.1, 0.4, 0.2),
@@ -21,7 +21,7 @@ def ccol(n):
 
 def scene(lids=True, ghosts=True, keepouts=False):
     sc = []
-    for n in meta['print1'] + meta['print2'] + ('lidar_mount',):
+    for n in meta['print1'] + meta['print2'] + [p for p in meta['print3'] if p in ('lidar_mount', 'rear_hatch', 'esp_carrier')]:
         if not lids and n.endswith('_cap') or not lids and n in ('tank_hatch', 'batt_hatch', 'lidar_mount'):
             continue
         op = 0.3 if n.endswith('_cap') or n.endswith('_hatch') else 1.0

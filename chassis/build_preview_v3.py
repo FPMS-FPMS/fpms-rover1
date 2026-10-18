@@ -10,6 +10,7 @@ import fpms_rover1_v3 as C
 THREE_DIR = sys.argv[sys.argv.index('--three') + 1] if '--three' in sys.argv else 'three'
 OUT = 'out_v3'
 meta = json.load(open(f'{OUT}/meta.json'))
+S = meta['summary']; H = meta['hinge']
 chk = json.load(open(f'{OUT}/checks.json'))
 
 PART_STYLE = {  # group, colour, opacity
@@ -17,6 +18,7 @@ PART_STYLE = {  # group, colour, opacity
     'tub_cap': ('lids', '#8db8d8', 0.35), 'shell_cap': ('lids', '#e8ad8a', 0.35), 'tank_hatch': ('lids', '#4fb0c8', 0.6),
     'tub_deck': ('decks', '#e0c34f', 1.0), 'tub_shelf': ('decks', '#e0c34f', 1.0), 'pump_deck': ('decks', '#e0c34f', 1.0),
     'lidar_mount': ('decks', '#555555', 1.0), 'batt_hatch': ('lids', '#f0c060', 0.55),
+    'rear_hatch': ('tub', '#c8c8c0', 0.75), 'esp_carrier': ('decks', '#6a8cc0', 1.0),
     'refill_arm': ('bedonly', '#e0a020', 1.0), 'spacer_1': ('bedonly', '#999999', 1.0), 'spacer_2': ('bedonly', '#999999', 1.0),
     'spacer_3': ('bedonly', '#999999', 1.0), 'spacer_4': ('bedonly', '#999999', 1.0)}
 COMP_COL = [('motor', '#33333d'), ('wheel', '#222222'), ('orange_pi', '#ff7a1a'), ('yahboom', '#1f7fe0'), ('estop', '#e01b1b'),

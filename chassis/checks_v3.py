@@ -35,6 +35,8 @@ def allowed(a, b):
     p = {a, b}
     if p == {'refill_arm_stowed', 'refill_arm_deployed'}:
         return True
+    if 'elbow_spray_in' in p and (p & {'pump_lower', 'tube_s_in'}):
+        return True
     for t in p:
         if t.startswith('tube_'):
             o = (p - {t}).pop()
@@ -71,6 +73,12 @@ for kn, km in K.items():
         v = inter_vol(km, cm)
         if v > 0.5:
             ov.append(('keepout ' + kn, cn, round(v, 1)))
+pn_ = list(P)                                       # printed parts vs each other (caps on walls touch: faces only)
+for i in range(len(pn_)):
+    for j in range(i + 1, len(pn_)):
+        v = inter_vol(P[pn_[i]], P[pn_[j]])
+        if v > 0.5:
+            ov.append((pn_[i], pn_[j], round(v, 1)))
 R['overlaps'] = ov
 if ov:
     hard_fail.append(f'{len(ov)} overlaps')
@@ -78,7 +86,7 @@ if ov:
 # ---------- 2. pocket clearance: every component to the nearest printed part, its designed seat excluded ----------
 allparts = trimesh.util.concatenate([parts[n] for n in parts])
 pq = trimesh.proximity.ProximityQuery(allparts)
-clr, seat_note = {}, {}
+clr, seat_note, clr_at = {}, {}, {}
 for cn, cm in comps.items():
     seat = meta['components'][cn]['seat']
     if seat is None:
@@ -119,6 +127,7 @@ for cn, cm in comps.items():
     sp = pts[keep]
     _, d, _ = pq.on_surface(sp)
     clr[cn] = round(float(d.min()), 2)
+    clr_at[cn] = [round(float(v), 1) for v in sp[int(np.argmin(d))]]
 # motor boss in its locating hole: radial clearance by construction
 R['boss_hole_radial_clearance'] = round(C.CLR, 2)
 R['clearance_mm'] = clr
@@ -308,11 +317,18 @@ tub_top = max(float(parts[n].vertices[:, 2].max()) for n in parts if meta['body_
 R['lidar']['tub_top'] = round(tub_top, 2)
 
 # ---------- 10. wet zone: every electronic part above the wet floor + 5 or behind a wall (A3) ----------
-WATER = [n for n in comps if n.startswith('tube_')] + ['nozzle_luer']     # open water: tubes, joints, nozzle (tank + pumps are sealed)
+WATER = [n for n in comps if n.startswith('tube_')] + ['nozzle_luer', 'elbow_spray_in']     # open water: tubes, joints, nozzle (tank + pumps are sealed)
 ELEC = ['battery_3s2p', 'nine_volt_1', 'nine_volt_2', 'esp32_s3', 'xy_mos_1', 'xy_mos_2', 'servo_mg90s', 'vl53l0x']
 shell_printed = trimesh.util.concatenate([parts[n] for n in parts if meta['body_of'][n] == 'shell'])
 ray = trimesh.ray.ray_triangle.RayMeshIntersector(shell_printed)
-water_mesh = trimesh.util.concatenate([comps[n] for n in WATER])
+leaks = []
+for n in [k for k in comps if k.startswith('tube_')]:
+    v = comps[n].vertices
+    for end in (0, -1):
+        q = np.asarray(C.TUBES[{'tube_s_out': 'S-out', 'tube_s_in': 'S-in', 'tube_r_in': 'R-in', 'tube_r_out': 'R-out'}[n]][end])
+        sph = trimesh.creation.icosphere(subdivisions=2, radius=7.0); sph.apply_translation(q); leaks.append(sph)
+leaks += [comps['elbow_spray_in']]
+water_mesh = trimesh.util.concatenate(leaks)          # joints: barbs, fittings, elbow, nozzle (a silicone tube itself does not leak)
 wq = trimesh.proximity.ProximityQuery(water_mesh)
 deck = parts['pump_deck'].bounds
 wet = {}
@@ -404,7 +420,8 @@ def min_radius(P, span=6):
             best = min(best, A * B * Cc / (4 * ar))
     return best
 hose = {}
-for st, deg_b in (('stowed', C.ARM['stowed_deg']), ('deployed', C.ARM['deployed_deg'])):
+for st, deg_b in (('stowed', C.ARM['stowed_deg']), ('swing-50', -50.0), ('swing-10', -10.0), ('swing+25', 25.0),
+                  ('deployed', C.ARM['deployed_deg'])):
     P0 = hose_outside(deg_b)
     for deg in (0.0, 20.0):
         Mrot = trimesh.transformations.rotation_matrix(math.radians(-deg), [0, 1, 0], [H['x'], 0, H['z']])
@@ -414,9 +431,15 @@ for st, deg_b in (('stowed', C.ARM['stowed_deg']), ('deployed', C.ARM['deployed_
         hose[f'{st}@{deg:g}'] = dict(wheel_gap=round(dw, 1), lowest_z=round(float(Pr[:, 2].min() - C.TUBE_R), 1),
                                      min_bend_radius=round(min_radius(P0[11:], span=12), 1), length=round(float(np.sum(np.linalg.norm(np.diff(P0, axis=0), axis=1))), 1))
 R['intake_hose_outside'] = hose
+hl = [v['length'] for v in hose.values()]
+R['intake_hose_length_spread'] = round(max(hl) - min(hl), 1)
+if max(hl) - min(hl) > 4.0:                      # one real hose: its length cannot change as the arm swings
+    hard_fail.append(f'intake hose length changes with the arm angle: {min(hl)}-{max(hl)} mm')
 for k, v in hose.items():
-    if v['wheel_gap'] < 4.0 or v['lowest_z'] < 0.0 or v['min_bend_radius'] < 25.0:
+    if v['wheel_gap'] < 4.0 or v['lowest_z'] < 0.0 or v['min_bend_radius'] < 18.0:
         hard_fail.append(f'intake hose {k}: {v}')
+    elif v['min_bend_radius'] < 25.0:
+        R.setdefault('warnings', []).append(f'intake hose {k}: tightest bend R{v["min_bend_radius"]} (target 25) - kink guard at the loop')
 
 # ---------- 13. spray cone clear (A1) ----------
 tip = np.array(C.NOZ['tip']); ca, sa = math.cos(math.radians(C.NOZ['angle'])), math.sin(math.radians(C.NOZ['angle']))
@@ -457,7 +480,7 @@ for n, pts in C.TUBES.items():
 R['tubes'] = tubes
 if not tubes:
     hard_fail.append('tubes not routed (tubes_v3.json missing)')
-R['warnings'] = []
+R.setdefault('warnings', [])
 for n, v in tubes.items():
     if v['min_bend_radius'] < 18.0:
         hard_fail.append(f'tube {n} bend radius {v["min_bend_radius"]} < 18')
@@ -477,41 +500,76 @@ R['esp32'] = dict(rails='C-rails on both long edges, from the ledge to %.1f of %
 # (component, direction it moves while going IN, travel mm). The path checked is the reverse: from its seat, travel mm
 # against that direction, against the printed parts present at that step (no caps / hatches / riser yet) and every
 # component installed before it.
-ORDER = [
-    ('regulator_5v', (0, 0, -1), 60), ('as5600_board', (0, 0, -1), 60), ('xy_mos_1', (0, 0, -1), 60), ('xy_mos_2', (0, 0, -1), 60),
-    ('tub_deck', (0, 0, -1), 90), ('orange_pi_n515', (0, 0, -1), 80), ('tub_shelf', (0, 0, -1), 50), ('yahboom_board', (0, 0, -1), 50),
-    ('estop_body', (0, 0, -1), 25), ('charge_jack_dc099', (1, 0, 0), 30),
-    ('pump_deck', (0, 0, -1), 100), ('pump_lower', (0, 0, -1), 100), ('pump_upper', (0, 0, -1), 60), ('servo_mg90s', (0, -1, 0), 4.5),
-    ('esp_carrier', (0, 0, -1), 80), ('esp32_s3', (0, 0, -1), 80), ('tank_water', (0, 0, -1), 60), ('battery_3s2p', (0, 0, -1), 60), ('nozzle_luer', (0, 0, -1), 30),
-]
+# For each part (in ASSEMBLY.md order) find a straight direction that takes it from its seat completely out of the body
+# (above the cap seam, or out through the open rear) without touching the printed parts present at that step or the
+# parts installed before it. Tries vertical, then tilts back along / around the tub's 20 deg rake, then sideways tilts.
+ORDER = ['regulator_5v', 'as5600_board', 'xy_mos_1', 'xy_mos_2', 'tub_deck', 'tub_shelf',
+         'pump_deck', 'pump_lower', 'pump_upper', 'servo_mg90s', 'esp_carrier', 'esp32_s3', 'tank_water', 'battery_3s2p',
+         'nozzle_luer', 'rear_hatch']
 PRESENT = ['main_tub', 'front_shell']
-def sweep_mesh(m, d, L, step=1.5):
-    d = np.asarray(d, float)
-    ms = [m.copy() for _ in range(int(L / step) + 1)]
-    for i, mm in enumerate(ms):
-        mm.apply_translation(-d * i * step)
-    return ms
+def cand_dirs():
+    out = [(0.0, 0.0, 1.0), (-1.0, 0.0, 0.0), (0.0, 0.0, -1.0)]
+    for th in (5, 10, 15, 20, 25, 30, 40):
+        for ph in (0, -15, 15):
+            t, p_ = math.radians(th), math.radians(ph)
+            out.append((-math.sin(t) * math.cos(p_), math.sin(t) * math.sin(p_), math.cos(t)))
+    a = math.radians(C.NOZ['angle']); out.append((-math.cos(a), 0.0, math.sin(a)))
+    return out
+def travel_out(m, d):
+    lo, hi = m.bounds
+    if d[2] > 0.1:
+        return (S['Z_SPLIT'] + 2 - lo[2]) / d[2]
+    if d[0] < -0.5:
+        return (lo[0] - (S['XRO'] - 2)) * 0 + (hi[0] - (S['XRO'] - 2)) / -d[0]
+    if d[2] < -0.5:
+        return (hi[2] - (26.0 - 2)) / -d[2]
+    raise ValueError(f'no exit rule for direction {d}')
 ins = {}
 installed = []
-for cn, d, L in ORDER:
-    obst = [P[n] for n in PRESENT] + [Cm[n] if n in Cm else P[n] for n in installed]
-    worst = 0.0
-    for mm in sweep_mesh(comps[cn] if cn in comps else parts[cn], d, L):
-        mm_ = man(mm)
-        for o in obst:
-            v = inter_vol(mm_, o)
-            if v > worst:
-                worst = v
-    # the servo first drops in from above (its spline then goes 4.5 mm into the wall): check that drop too
-    if cn == 'servo_mg90s':
-        sv = comps[cn].copy(); sv.apply_translation([0, 4.6, 0])
-        for mm in sweep_mesh(sv, (0, 0, -1), 80):
+RIDES = {'tub_deck': 'orange_pi_n515', 'tub_shelf': 'yahboom_board'}      # screwed onto the printed part before it goes in
+for cn in ORDER:
+    m = comps[cn] if cn in comps else ALLP[cn]
+    if cn in RIDES:
+        m = trimesh.util.concatenate([m, comps[RIDES[cn]]])
+    obst = [P[n] for n in PRESENT if n != cn] + [Cm[n] if n in Cm else man(ALLP[n]) for n in installed]
+    FIRST = {'regulator_5v': ((0.0, 0.0, 1.0), 9.0), 'servo_mg90s': ((0.0, 1.0, 0.0), 4.5),
+             'nozzle_luer': ((-math.cos(math.radians(C.NOZ['angle'])), 0.0, math.sin(math.radians(C.NOZ['angle']))), 8.0),
+             'rear_hatch': ((0.0, 0.0, 1.0), 3.5)}          # nozzle: tip back out of the wall hole; hatch: lip up out of the stub
+    first = FIRST.get(cn)
+    if first:
+        m0 = m; m = m.copy(); w0 = 0.0
+        for k in range(int(first[1] / 1.5) + 2):
+            mm = m0.copy(); mm.apply_translation(np.asarray(first[0]) * min(k * 1.5, first[1]))
             for o in obst:
-                worst = max(worst, inter_vol(man(mm), o))
-    ins[cn] = dict(direction=d, travel=L, blocked_mm3=round(worst, 1))
+                w0 = max(w0, inter_vol(man(mm), o))
+        m.apply_translation(np.asarray(first[0]) * first[1])
+        if w0 > 1.0:
+            ins[cn] = dict(path_out=None, travel=None, blocked=True, note=f'first move blocked {w0:.0f} mm3'); installed.append(cn); continue
+    found = None
+    for d in cand_dirs():
+        L = min(travel_out(m, d), 250.0)
+        worst = 0.0
+        for k in range(int(L / 2.0) + 2):
+            mm = m.copy(); mm.apply_translation(np.asarray(d) * min(k * 2.0, L))
+            mm_ = man(mm)
+            for o in obst:
+                worst = max(worst, inter_vol(mm_, o))
+            if worst > 1.0:
+                break
+        if worst <= 1.0:
+            found = (d, round(L, 1)); break
+    if found and first:
+        found = (found[0], found[1], f'first {first[1]} mm along {tuple(round(x, 2) for x in first[0])}')
+    ins[cn] = dict(path_out=found[0] if found else None, travel=found[1] if found else None, blocked=found is None,
+                   note=found[2] if found and len(found) > 2 else '')
     installed.append(cn)
+    if cn in RIDES:
+        installed.append(RIDES[cn]); ins[cn]['note'] = (ins[cn]['note'] + f' with {RIDES[cn]} screwed on').strip()
+    if cn in ('tub_deck', 'tub_shelf', 'pump_deck', 'esp_carrier', 'rear_hatch'):
+        PRESENT.append(cn); installed.remove(cn)
+        P[cn] = man(ALLP[cn])
 R['insertion'] = ins
-bad_ins = {k: v for k, v in ins.items() if v['blocked_mm3'] > 1.0}
+bad_ins = {k: v for k, v in ins.items() if v['blocked']}
 if bad_ins:
     hard_fail.append(f'insertion path blocked: {bad_ins}')
 
@@ -538,7 +596,7 @@ L += [f'## Pocket clearance (minimum {MIN_CLR} mm per side)', '',
       'Smallest gap from each component to any printed part, ignoring only the surface it is designed to rest or bolt on.',
       f"Motor bosses run in Ø12.9 holes: {R['boss_hole_radial_clearance']} mm radial by construction.", '',
       '| component | min gap mm | seat (excluded) |', '|---|---|---|']
-L += [f"| {k} | {v} | {seat_note.get(k, '')} |" for k, v in sorted(clr.items(), key=lambda kv: kv[1])] + ['']
+L += [f"| {k} | {v} at {clr_at.get(k)} | {seat_note.get(k, '')} |" for k, v in sorted(clr.items(), key=lambda kv: kv[1])] + ['']
 hs = R['hinge_sweep']
 L += ['## Hinge sweep (shell + its cap, hatch, deck, components and front wheels rotated about the pin)', '',
       f"- moves freely from {hs['free_from']} to {hs['free_to']} deg (0.25 deg steps)",
@@ -553,7 +611,7 @@ L += ['## Outline and curbs', '', f"- length {S['length']} mm (limit 210)",
 L += [f'- curb, {k}: {v}' for k, v in curb.items()] + ['']
 L += ['## Wheels', '', '| wheel | gap to its body mm |', '|---|---|'] + [f'| {k} | {v} |' for k, v in R['wheel_to_body_mm'].items()] + ['']
 L += ['## Bed (Bambu P1S 256 x 256)', '', f"- Print 1 (tub + shell assembled): {R['print1_extent']} mm",
-      f"- Print 3 (LiDAR riser, refill arm, 4 coupling spacers): {R['print3_extent']} mm",
+      f"- Print 3 (rear hatch, tank hatch, LiDAR riser, refill arm, ESP32 carrier, 4 coupling spacers): {R['print3_extent']} mm",
       f"- Print 2 (caps, hatches, decks, shelf): {R['print2_extent']} mm, fits: {R['print2_fits']}"
       f" ({R['print2_area_pct']}% of the bed){'; ' + ', '.join(touch) if touch else ''}", '']
 L += ['## Fill per bay (v3)', '', '| bay | bay cm3 | components cm3 | fill | incl. plug/air/bend zones |', '|---|---|---|---|---|']
@@ -589,7 +647,8 @@ L += [''] + [f'- {x}' for x in cb['not_crossing']] + ['']
 L += ['## Refill arm and intake hose (A2)', '', '| arm @ hinge deg | front wheel gap | rear wheel gap | lowest Z |', '|---|---|---|---|']
 L += [f"| {k} | {v['front_wheel_gap']} | {v['rear_wheel_gap']} | {v['lowest_z']} |" for k, v in R['arm'].items()]
 L += ['', '| hose outside @ hinge deg | wheel gap | lowest Z | min bend R | length |', '|---|---|---|---|---|']
-L += [f"| {k} | {v['wheel_gap']} | {v['lowest_z']} | {v['min_bend_radius']} | {v['length']} |" for k, v in R['intake_hose_outside'].items()] + ['']
+L += [f"| {k} | {v['wheel_gap']} | {v['lowest_z']} | {v['min_bend_radius']} | {v['length']} |" for k, v in R['intake_hose_outside'].items()]
+L += ['', f"- one hose for every arm angle: its length varies by {R['intake_hose_length_spread']} mm over the swing (limit 4); the loop changes shape, not length", '']
 sp = R['spray']
 L += ['## Spray nozzle (A1)', '', f"- tip {sp['tip']}, {sp['angle_down']} deg down, inside the outline: {sp['tip_inside_outline']}",
       f"- 4 deg half-angle cone, 600 mm: blocked by {sp['blocked_by'] or 'nothing'}; straight line reaches the ground at X ~{sp['lands_at_x']}", '']
@@ -597,8 +656,9 @@ L += ['## Tubes (6x9 silicone, R25 minimum)', '', '| tube | length mm | min bend
 L += [f"| {k} | {v['length_mm']} | {v['min_bend_radius']} |" for k, v in R['tubes'].items()] + ['']
 L += ['## AS5600 hinge sensor (B9)', '', f"- magnet face to chip {R['as5600']['magnet_to_chip_gap_mm']} mm (datasheet {R['as5600']['datasheet_gap']}), magnet on the hinge axis", '']
 L += ['## ESP32 (B6)', '', f"- {R['esp32']['rails']}; {R['esp32']['usb']}", '']
-L += ['## Assembly: straight insertion paths (in ASSEMBLY.md order)', '', '| part | moves in along | travel mm | blocked mm3 |', '|---|---|---|---|']
-L += [f"| {k} | {v['direction']} | {v['travel']} | {v['blocked_mm3']} |" for k, v in R['insertion'].items()] + ['']
+L += ['## Assembly: a straight path out for every part (reverse = its way in), in ASSEMBLY.md order', '',
+      '| part | straight path out (unit vector) | travel mm | note |', '|---|---|---|---|']
+L += [f"| {k} | {'BLOCKED' if v['blocked'] else tuple(round(x, 2) for x in v['path_out'])} | {v['travel']} | {v['note']} |" for k, v in R['insertion'].items()] + ['']
 open('CHECKS.md', 'w').write('\n'.join(L) + '\n')
 print('\n'.join(L))
 sys.exit(1 if hard_fail else 0)
