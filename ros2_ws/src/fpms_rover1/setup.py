@@ -23,6 +23,9 @@ setup(
             'thermal_node = fpms_rover1.thermal_node:main',
             'yahboom_node = fpms_rover1.yahboom_node:main',
             'odom_node = fpms_rover1.odom_node:main',
+            'drive_node = fpms_rover1.drive_node:main',
+            'motion_seq = fpms_rover1.motion_seq:main',
+            'yaw_ruler = fpms_rover1.yaw_ruler:main',
         ],
     },
 )

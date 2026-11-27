@@ -1,0 +1,125 @@
+<?xml version="1.0"?>
+<!-- FPMS Rover 1. Every dimension here was TAPE-MEASURED by the team
+     2026-10-09; nothing is inferred from behaviour.
+
+     WHY THAT MATTERS: the track width was once back-derived from a stall test
+     as 418-501 mm. It is 115. The 4x error inverted the diagnosis of why the
+     rover cannot spin. A URDF built on a derived dimension is a URDF that lies
+     to every consumer downstream - robot_localization, Nav2, every TF lookup.
+
+     FRAMES (REP-103: x forward, y left, z up)
+       base_link    ground projection of the DRIVE AXLE CENTRE
+       base_laser   the scanner's rotation centre
+       wheel_*      the four fixed wheels
+
+     THE ONE NUMBER STILL UNMEASURED is laser_z - the height of the scan plane
+     above the ground. A horizontal 2D scan carries no height information, so
+     software cannot recover it, and the STL-19P resellers contradict each
+     other on the module's own height (54x46x35 vs 38.6x38.9x33.5 mm). It is
+     one ruler reading: ground -> the slot the laser exits, NOT the case top.
+     Until then it is LDROBOT's example value and is marked as such. It affects
+     what obstacle HEIGHTS are visible and the TF z, not 2D clearance maths. -->
+<robot name="fpms_rover1" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- MEASURED, mm -> m -->
+  <xacro:property name="wheelbase"   value="0.195"/>
+  <xacro:property name="track"       value="0.115"/>
+  <xacro:property name="wheel_dia"   value="0.080"/>
+  <xacro:property name="wheel_r"     value="${wheel_dia/2.0}"/>
+  <xacro:property name="wheel_w"     value="0.026"/>   <!-- [[TEAM: tyre width]] -->
+  <xacro:property name="body_len"    value="0.250"/>   <!-- 80 front + 170 back -->
+  <xacro:property name="body_wid"    value="0.240"/>   <!-- 120 + 120 -->
+  <xacro:property name="body_h"      value="0.060"/>   <!-- [[TEAM: body height]] -->
+  <xacro:property name="mass"        value="0.400"/>
+
+  <!-- Scanner 45 mm FORWARD of the axle centre, derived from the measured
+       body: LiDAR 80 from the front, 170 from the back, so the body centre
+       sits 45 mm behind it. VALID ONLY IF the 195 mm wheelbase is centred in
+       the 250 mm body - [[TEAM: confirm, or give the axle offset]].
+       It is not cosmetic: a 45 mm offset means every rotation TRANSLATES the
+       scanner by 45 mm x angle, which is the coupling that corrupted the
+       scan-match heading measurement. -->
+  <xacro:property name="laser_x"     value="0.045"/>
+  <xacro:property name="laser_z"     value="0.180"/>   <!-- UNMEASURED -->
+
+  <!-- Thin plate inertia about the centre; good enough for TF and Nav2,
+       which never integrate it. Do not use for dynamics. -->
+  <xacro:macro name="box_inertia" params="m x y z">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(y*y+z*z)/12.0}" iyy="${m*(x*x+z*z)/12.0}"
+               izz="${m*(x*x+y*y)/12.0}" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </xacro:macro>
+
+  <link name="base_link">
+    <visual>
+      <!-- The body is NOT centred on the axle: it reaches 80 mm ahead of the
+           scanner and 170 behind, and the scanner is 45 ahead of the axle. -->
+      <origin xyz="${laser_x - (body_len/2.0 - 0.080)} 0 ${body_h/2.0}"/>
+      <geometry><box size="${body_len} ${body_wid} ${body_h}"/></geometry>
+      <material name="fpms_body"><color rgba="0.18 0.20 0.24 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="${laser_x - (body_len/2.0 - 0.080)} 0 ${body_h/2.0}"/>
+      <geometry><box size="${body_len} ${body_wid} ${body_h}"/></geometry>
+    </collision>
+    <xacro:box_inertia m="${mass}" x="${body_len}" y="${body_wid}" z="${body_h}"/>
+  </link>
+
+  <!-- base_footprint: what a 2D costmap wants. Same place, zero height. -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/><child link="base_link"/>
+    <origin xyz="0 0 0"/>
+  </joint>
+
+  <xacro:macro name="wheel" params="name x y">
+    <link name="${name}">
+      <visual>
+        <origin rpy="1.5707963 0 0"/>
+        <geometry><cylinder radius="${wheel_r}" length="${wheel_w}"/></geometry>
+        <material name="fpms_tyre"><color rgba="0.08 0.08 0.09 1"/></material>
+      </visual>
+      <collision>
+        <origin rpy="1.5707963 0 0"/>
+        <geometry><cylinder radius="${wheel_r}" length="${wheel_w}"/></geometry>
+      </collision>
+      <xacro:box_inertia m="0.02" x="${wheel_dia}" y="${wheel_w}" z="${wheel_dia}"/>
+    </link>
+    <!-- FIXED, not continuous. All four wheels are fixed and driven (no
+         steering linkage), and nothing publishes a wheel joint state, so a
+         continuous joint would leave robot_state_publisher waiting for a
+         /joint_states that never arrives and publishing no TF at all. -->
+    <joint name="${name}_joint" type="fixed">
+      <parent link="base_link"/><child link="${name}"/>
+      <origin xyz="${x} ${y} ${wheel_r}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:wheel name="wheel_front_left"  x="${ wheelbase/2.0}" y="${ track/2.0}"/>
+  <xacro:wheel name="wheel_front_right" x="${ wheelbase/2.0}" y="${-track/2.0}"/>
+  <xacro:wheel name="wheel_rear_left"   x="${-wheelbase/2.0}" y="${ track/2.0}"/>
+  <xacro:wheel name="wheel_rear_right"  x="${-wheelbase/2.0}" y="${-track/2.0}"/>
+
+  <link name="base_laser"/>
+  <joint name="base_laser_joint" type="fixed">
+    <parent link="base_link"/><child link="base_laser"/>
+    <origin xyz="${laser_x} 0 ${laser_z}"/>
+  </joint>
+
+  <!-- The STM32's ICM20948. Orientation [[TEAM: confirm mounting]]. Its yaw
+       is mis-scaled and SIGN-INVERTED against laser odometry, so nothing
+       should close a loop on it until that scale is measured. -->
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/><child link="imu_link"/>
+    <origin xyz="0 0 ${body_h}"/>
+  </joint>
+
+  <link name="thermal_link"/>
+  <joint name="thermal_joint" type="fixed">
+    <parent link="base_link"/><child link="thermal_link"/>
+    <origin xyz="${laser_x + 0.080} 0 ${body_h}" rpy="0 0 0"/>
+  </joint>
+</robot>

@@ -1,0 +1,134 @@
+# Nav2 planning for FPMS Rover 1. PLANNER ONLY - no controller, no behaviour
+# tree. The team's standing decision is to keep Nav2's search and throw away
+# its controller, and nothing here contradicts that.
+#
+# Everything is in METRES. The map frame IS the arena frame: odom_node
+# publishes map->odom at the placed start pose, so arena mm / 1000 = map m.
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      tolerance: 0.10
+      downsample_costmap: false
+      allow_unknown: true
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 5.0
+      # REEDS_SHEPP, not DUBIN. Dubins is forward-only; Reeds-Shepp may
+      # REVERSE, which is the difference between manoeuvring and not in a
+      # space smaller than the turning circle. Rover 1 reverses perfectly
+      # well - it is ROTATION it cannot do.
+      motion_model_for_search: "REEDS_SHEPP"
+      angle_quantization_bins: 72        # 5 deg, Nav2's recommended baseline
+      # THE PARAMETER THIS WHOLE EXERCISE IS ABOUT.
+      # Nav2's default is 0.40 m. Rover 1 MEASURES ~1.30 m, and this is set to
+      # the MEASURED value so the planner only ever returns paths the chassis
+      # can actually drive.
+      #
+      # I expected 1.30 to make planning impossible - a 90 deg turn at that
+      # radius sweeps 1300 mm forward AND 1300 sideways in a 1000 mm arena,
+      # and a single forward-only Dubins arc indeed finds nothing. IT PLANS
+      # ANYWAY, because Reeds-Shepp may REVERSE, and the search shuffles like
+      # a multi-point turn. Measured, same goals, same obstacles:
+      #
+      #   goal          r=0.30                r=1.30 (real)
+      #   M1 standoff    866 mm, all forward   1648 mm,  7 reverse steps
+      #   M2 standoff   1297 mm,  3 reverse    3175 mm,  9 reverse steps
+      #   M3 standoff   1151 mm,  4 reverse    2563 mm, 12 reverse steps
+      #
+      # So navigation is possible TODAY at ~2x the path length and 7-12
+      # direction changes. Each change costs time and re-exposes the heading
+      # drift, so a tighter chassis is still worth having - but it is an
+      # optimisation, NOT a blocker. Set 0.30 to see the target behaviour.
+      minimum_turning_radius: 1.30
+      # Nav2's note: analytic expansion should be 4-5x the minimum radius.
+      # 0.30 * 5 = 1.5 m, which an arena 1.2 m deep can just about host. At
+      # 1.30 m radius it would want 6.5 m, inside 1.2 - the tuning guidance
+      # itself stops making sense, which is the clearest sign the radius is
+      # wrong rather than the config.
+      analytic_expansion_ratio: 3.5
+      analytic_expansion_max_length: 1.5
+      reverse_penalty: 2.0        # reverse is allowed, just not preferred
+      change_penalty: 0.0         # 0 keeps Hybrid-A* admissible (Nav2 default)
+      non_straight_penalty: 1.2
+      cost_penalty: 2.0
+      retrospective_penalty: 0.015
+      # 20.0 m was Nav2's default and it is absurd here: it builds an
+      # 800 x 800 cached heuristic table - 640,000 entries - for an arena
+      # 1.2 m deep, and the node sat in "Configuring" for over 30 s without
+      # finishing. The table should span the longest plan we will ever ask
+      # for, which across this arena corner to corner is ~1.6 m.
+      lookup_table_size: 2.0
+      cache_obstacle_heuristic: false
+      smooth_path: true
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
+
+# TOP LEVEL, NOT nested inside planner_server. The costmap is a SEPARATE
+# node (/global_costmap/global_costmap), so nesting it under planner_server
+# makes ROS ignore the whole block in SILENCE - no error, no warning. It ran
+# on defaults: a 5 x 5 m costmap with a static_layer waiting for a map that
+# never arrives, and robot_radius 0.1 instead of the measured 0.12.
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      # MEASURED half-width, 120 mm. Not a guess and not Rover 2's 130.
+      robot_radius: 0.12
+      resolution: 0.025
+      # The arena, exactly: 1000 x 1200 mm with its origin at 0,0. NOT a
+      # rolling window - the field is fixed and known, and a rolling
+      # costmap would let the planner wander outside it.
+      rolling_window: false
+      # 1.0 x 1.2 m = the arena. I first typed 1 and 2, which would have
+      # built a 1 x 2 m costmap - 800 mm of phantom field beyond the mat,
+      # and the planner would happily route through it.
+      # INTEGERS, in metres. nav2_costmap_2d declares width/height as int and
+      # REJECTS a double outright - "parameter {height} is of type {integer},
+      # setting it to {double} is not allowed" - and the node ABORTS on
+      # startup. A 1200 mm arena therefore cannot be expressed exactly; 2 is
+      # the smallest legal value that covers it.
+      #
+      # CONSEQUENCE, AND IT MATTERS: the costmap is 1 x 2 m, so 800 mm of it
+      # lies BEYOND the mat. Nothing marks that region lethal, so the planner
+      # will route through it given a reason to. The proper bound is a static
+      # keepout map - which is exactly what Rover 2's stack uses (a Nav2
+      # KeepoutFilter mask), because this arena has NO physical walls for the
+      # scanner to see.
+      # [[TEAM: add the keepout mask before trusting a planned route]]
+      width: 1
+      height: 2
+      origin_x: 0.0
+      origin_y: 0.0
+      track_unknown_space: false
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          sensor_frame: base_laser
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          max_obstacle_height: 2.0
+          # Gated to the arena. The room is 5 m deep and 80% of the scan
+          # is furniture; without this the costmap fills with walls that
+          # are not in the arena at all.
+          obstacle_max_range: 1.6
+          raytrace_max_range: 2.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.18

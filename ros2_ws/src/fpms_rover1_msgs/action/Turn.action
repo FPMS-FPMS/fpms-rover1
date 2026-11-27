@@ -1,0 +1,14 @@
+# Turn in place by an angle, closed loop on the board's FUSED yaw.
+#
+# Yaw is read from the IMU rather than integrated from wheel counts: wheels
+# slip when turning on the spot, so encoder-derived heading drifts badly.
+# Positive is LEFT (counter-clockwise), per REP-103.
+float32 angle_deg
+float32 speed_pwm      # 0 = node default
+---
+float32 turned_deg
+bool success
+string message
+---
+float32 turned_deg
+float32 remaining_deg

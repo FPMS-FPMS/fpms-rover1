@@ -1,0 +1,16 @@
+# Drive a measured distance in a straight line, closed loop on the encoders.
+#
+# Positive distance is FORWARD. The sign sent to the motors is handled by the
+# driver: a positive motor command produces NEGATIVE encoder counts on this
+# rover, measured 2026-10-09, and that inversion lives in one place only.
+float32 distance_mm
+float32 speed_pwm      # 0 = use the node's default. Below ~12 it will not move.
+---
+float32 travelled_mm
+float32 heading_drift_deg
+bool success
+string message
+---
+float32 travelled_mm
+float32 remaining_mm
+float32 speed_mms
